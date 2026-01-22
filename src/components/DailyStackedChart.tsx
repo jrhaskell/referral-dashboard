@@ -112,7 +112,7 @@ export function DailyStackedChart({
               tickFormatter={(value) => valueFormatter(Number(value))}
             />
             <Tooltip
-              formatter={(value: number) => valueFormatter(Number(value))}
+              formatter={(value: number | string | undefined) => valueFormatter(Number(value ?? 0))}
               labelFormatter={(label) => format(new Date(label), 'yyyy-MM-dd')}
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null

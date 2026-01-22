@@ -249,9 +249,10 @@ export function HomePage() {
               <XAxis dataKey="date" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} />
               <Tooltip
-                formatter={(value: number, name: string) => {
-                  if (name === 'feeUsd') return formatUsd(Number(value))
-                  return formatNumber(Number(value))
+                formatter={(value: number | string | undefined, name: string) => {
+                  const numeric = Number(value ?? 0)
+                  if (name === 'feeUsd') return formatUsd(numeric)
+                  return formatNumber(numeric)
                 }}
               />
               <Area type="monotone" dataKey="feeUsd" stroke="#6366f1" fill="url(#fee)" />

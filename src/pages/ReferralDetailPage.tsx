@@ -212,7 +212,7 @@ export function ReferralDetailPage() {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(value: number) => formatUsd(Number(value))} />
+              <Tooltip formatter={(value: number | string | undefined) => formatUsd(Number(value ?? 0))} />
               <Area type="monotone" dataKey="feeUsd" stroke="#0ea5e9" fill="url(#fee-detail)" />
               <Area type="monotone" dataKey="volumeUsd" stroke="#22c55e" fill="url(#volume-detail)" />
             </AreaChart>
@@ -254,7 +254,7 @@ export function ReferralDetailPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="bucket" tick={{ fontSize: 12 }} interval="preserveStartEnd" />
                 <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value: number) => formatNumber(Number(value))} />
+                <Tooltip formatter={(value: number | string | undefined) => formatNumber(Number(value ?? 0))} />
                 {feeDistribution.averageLabel ? (
                   <ReferenceLine
                     x={feeDistribution.averageLabel}

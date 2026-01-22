@@ -119,7 +119,7 @@ export function WalletLookupPage() {
                   <LineChart data={timeline} margin={{ left: 8, right: 8, top: 8, bottom: 0 }}>
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip formatter={(value: number) => formatUsd(Number(value))} />
+                    <Tooltip formatter={(value: number | string | undefined) => formatUsd(Number(value ?? 0))} />
                     <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>

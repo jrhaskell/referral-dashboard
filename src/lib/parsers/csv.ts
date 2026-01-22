@@ -1,4 +1,4 @@
-import Papa from 'papaparse'
+import Papa, { type ParseError, type ParseResult } from 'papaparse'
 import { z } from 'zod'
 
 import { type Customer, normalizeWallet, parseDateInput, toDateKey } from '@/lib/analytics'
@@ -60,18 +60,18 @@ export async function parseCustomersCsv(
       header: true,
       skipEmptyLines: true,
       worker: true,
-      chunk: (results) => {
+      chunk: (results: ParseResult<Record<string, string>>) => {
         if (!headers.length) {
           headers = results.meta.fields ?? []
           missingHeaders = REQUIRED_HEADERS.filter((header) => !headers.includes(header))
           if (results.data[0]) {
             sample = Object.fromEntries(
-              Object.entries(results.data[0]).map(([key, value]) => [key, value ?? '']),
+              Object.entries(results.data[0]).map(([key, value]) => [key, String(value ?? '')]),
             )
           }
         }
 
-        results.data.forEach((row) => {
+        results.data.forEach((row: Record<string, string>) => {
           rows += 1
           const validation = customerRowSchema.safeParse(row)
           if (!validation.success) {
@@ -112,7 +112,7 @@ export async function parseCustomersCsv(
           report: { headers, missingHeaders, sample },
         })
       },
-      error: (error) => {
+      error: (error: ParseError) => {
         reject(error)
       },
     })
