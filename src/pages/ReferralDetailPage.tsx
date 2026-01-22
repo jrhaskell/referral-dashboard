@@ -6,6 +6,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -239,15 +240,51 @@ export function ReferralDetailPage() {
           <CardTitle>Fee per user distribution</CardTitle>
         </CardHeader>
         <CardContent className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={feeDistribution} margin={{ left: 8, right: 8, top: 8, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="bucket" tick={{ fontSize: 12 }} />
-              <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Bar dataKey="users" fill="#6366f1" />
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="h-full overflow-x-auto">
+            <div style={{ width: feeDistribution.chartWidth, height: '100%' }}>
+              <BarChart
+                width={feeDistribution.chartWidth}
+                height={240}
+                data={feeDistribution.data}
+                margin={{ left: 8, right: 8, top: 16, bottom: 0 }}
+                barCategoryGap="20%"
+                barGap={1}
+                barSize={6}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="bucket" tick={{ fontSize: 12 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip formatter={(value: number) => formatNumber(Number(value))} />
+                {feeDistribution.averageLabel ? (
+                  <ReferenceLine
+                    x={feeDistribution.averageLabel}
+                    stroke="#0ea5e9"
+                    strokeDasharray="4 4"
+                    label={{
+                      value: `Avg ${formatUsd(feeDistribution.average)}`,
+                      position: 'top',
+                      fill: '#0ea5e9',
+                      fontSize: 12,
+                    }}
+                  />
+                ) : null}
+                {feeDistribution.medianLabel ? (
+                  <ReferenceLine
+                    x={feeDistribution.medianLabel}
+                    stroke="#f97316"
+                    strokeDasharray="4 4"
+                    label={{
+                      value: `Median ${formatUsd(feeDistribution.median)}`,
+                      position: 'top',
+                      fill: '#f97316',
+                      fontSize: 12,
+                    }}
+                  />
+                ) : null}
+                <Bar dataKey="users" fill="#6366f1" />
+              </BarChart>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -400,19 +437,58 @@ function buildTxColumns() {
 }
 
 function buildFeeDistribution(users: UserAgg[]) {
-  const thresholds = [50, 200, 500, 1000, 5000]
-  const labels = ['0-50', '50-200', '200-500', '500-1k', '1k-5k', '5k+']
-  const counts = new Array(labels.length).fill(0)
+  const fees = users
+    .filter((user) => user.revenueTxCount > 0)
+    .map((user) => user.feeUsd)
+    .sort((a, b) => a - b)
 
-  users.forEach((user) => {
-    const fee = user.feeUsd
-    const bucketIndex = thresholds.findIndex((limit) => fee < limit)
-    const index = bucketIndex === -1 ? labels.length - 1 : bucketIndex
+  const maxFee = fees[fees.length - 1] ?? 0
+  const bucketSize = pickBucketSize()
+  const bucketCount = Math.max(1, Math.floor(maxFee / bucketSize) + 1)
+
+  const counts = new Array(bucketCount).fill(0)
+  fees.forEach((fee) => {
+    const index = Math.min(Math.floor(fee / bucketSize), bucketCount - 1)
     counts[index] = (counts[index] ?? 0) + 1
   })
 
-  return labels.map((label, idx) => ({
-    bucket: label,
-    users: counts[idx] ?? 0,
-  }))
+  const data = counts.map((count, index) => {
+    const start = index * bucketSize
+    const end = (index + 1) * bucketSize
+    const startLabel = formatBucketValue(start, bucketSize)
+    const endLabel = formatBucketValue(end, bucketSize)
+    const label = `${startLabel}-${endLabel}`
+    return { bucket: label, users: count, start, end }
+  })
+
+  const average = fees.length ? fees.reduce((sum, fee) => sum + fee, 0) / fees.length : 0
+  const median = fees.length
+    ? fees.length % 2
+      ? fees[Math.floor(fees.length / 2)]
+      : (fees[fees.length / 2 - 1] + fees[fees.length / 2]) / 2
+    : 0
+
+  const averageLabel = fees.length ? findBucketLabel(data, average) : null
+  const medianLabel = fees.length ? findBucketLabel(data, median) : null
+  const chartWidth = Math.max(640, data.length * 24)
+
+  return { data, average, median, averageLabel, medianLabel, chartWidth }
+}
+
+function pickBucketSize() {
+  return 0.5
+}
+
+function formatBucketValue(value: number, bucketSize: number) {
+  if (bucketSize < 1) return value.toFixed(2)
+  if (bucketSize < 10) return value.toFixed(1)
+  return Math.round(value).toString()
+}
+
+function findBucketLabel(data: Array<{ bucket: string; start: number; end: number }>, value: number) {
+  const match = data.find((row, index) => {
+    if (index === data.length - 1) return value >= row.start && value <= row.end
+    return value >= row.start && value < row.end
+  })
+  return match?.bucket ?? null
 }
