@@ -54,6 +54,16 @@ function persistSavedGroups(groups: SavedGroup[]) {
 export function GroupsPage() {
   const { index, dateRange, setDateRange } = useAnalytics()
 
+  const normalizeRange = React.useCallback(
+    (start: string, end: string, fallback: DateRange): DateRange => {
+      const startValue = start || fallback.start
+      const endValue = end || fallback.end
+      if (startValue > endValue) return { start: endValue, end: startValue }
+      return { start: startValue, end: endValue }
+    },
+    [],
+  )
+
   if (!index || !dateRange) {
     return (
       <Card>
@@ -79,10 +89,22 @@ export function GroupsPage() {
   const [groupName, setGroupName] = React.useState('')
   const [savedGroups, setSavedGroups] = React.useState<SavedGroup[]>(() => loadSavedGroups())
   const [leaderboardQuery, setLeaderboardQuery] = React.useState('')
+  const [adStart, setAdStart] = React.useState('')
+  const [adEnd, setAdEnd] = React.useState('')
+  const [conversionStart, setConversionStart] = React.useState('')
+  const [conversionEnd, setConversionEnd] = React.useState('')
+  const [adSpendInput, setAdSpendInput] = React.useState('')
 
   React.useEffect(() => {
     persistSavedGroups(savedGroups)
   }, [savedGroups])
+
+  React.useEffect(() => {
+    setAdStart(range.start)
+    setAdEnd(range.end)
+    setConversionStart(range.start)
+    setConversionEnd(range.end)
+  }, [range.start, range.end])
 
   const allMetrics = React.useMemo(
     () => getGroupLeaderboard(index, range, referralCodes),
@@ -104,6 +126,22 @@ export function GroupsPage() {
     () => getGroupSummary(index, range, selectedCodes),
     [index, range, selectedCodes],
   )
+
+  const adRange = normalizeRange(adStart, adEnd, range)
+  const conversionRange = normalizeRange(conversionStart, conversionEnd, range)
+  const adSummary = React.useMemo(
+    () => getGroupSummary(index, adRange, selectedCodes),
+    [index, adRange, selectedCodes],
+  )
+  const conversionSummary = React.useMemo(
+    () => getGroupSummary(index, conversionRange, selectedCodes),
+    [index, conversionRange, selectedCodes],
+  )
+
+  const adSpendValue = Number(adSpendInput)
+  const hasSpend = adSpendInput !== '' && Number.isFinite(adSpendValue) && adSpendValue > 0
+  const estimatedFee = adSummary.signups * conversionSummary.conversionRate * conversionSummary.feePerUser
+  const estimatedRoas = hasSpend ? estimatedFee / adSpendValue : null
 
   const concentration = React.useMemo(() => getGroupConcentration(selectedMetrics), [selectedMetrics])
 
@@ -295,6 +333,104 @@ export function GroupsPage() {
             concentration={concentration}
             flags={flags}
           />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Ad insertion ROAS estimator</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Ad start</p>
+                  <Input
+                    type="date"
+                    min={bounds.start}
+                    max={bounds.end}
+                    value={adStart}
+                    onChange={(event) => setAdStart(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Ad end</p>
+                  <Input
+                    type="date"
+                    min={bounds.start}
+                    max={bounds.end}
+                    value={adEnd}
+                    onChange={(event) => setAdEnd(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Ad spend (USD)</p>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={adSpendInput}
+                    onChange={(event) => setAdSpendInput(event.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Conversion window start</p>
+                  <Input
+                    type="date"
+                    min={bounds.start}
+                    max={bounds.end}
+                    value={conversionStart}
+                    onChange={(event) => setConversionStart(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Conversion window end</p>
+                  <Input
+                    type="date"
+                    min={bounds.start}
+                    max={bounds.end}
+                    value={conversionEnd}
+                    onChange={(event) => setConversionEnd(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Signups in ad window</p>
+                  <p className="text-lg font-semibold">{formatNumber(adSummary.signups)}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Conversion rate</p>
+                  <p className="text-lg font-semibold">
+                    {formatPercent(conversionSummary.conversionRate)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Fee per active user</p>
+                  <p className="text-lg font-semibold">{formatUsd(conversionSummary.feePerUser)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Estimated fee</p>
+                  <p className="text-lg font-semibold">{formatUsd(estimatedFee)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Estimated ROAS</p>
+                  <p className="text-lg font-semibold">
+                    {hasSpend && estimatedRoas !== null ? estimatedRoas.toFixed(2) : '—'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
+                  Clear spend
+                </Button>
+                <span>Estimated fee = signups × conversion rate × fee per active user</span>
+              </div>
+            </CardContent>
+          </Card>
 
           <div className="grid gap-4 md:grid-cols-5">
             <KpiCard title="Signups" value={formatNumber(summary.signups)} />

@@ -22,12 +22,14 @@ import { GroupSummaryCard } from '@/components/GroupSummaryCard'
 import { KpiCard } from '@/components/KpiCard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   getDailySeries,
   getRangeBounds,
   getReferralMetrics,
   type UserAgg,
+  type DateRange,
 } from '@/lib/analytics'
 import { buildDailyStackedSeries } from '@/lib/analytics/buildDailySeries'
 import { useAnalytics } from '@/lib/analytics/context'
@@ -77,10 +79,29 @@ export function ReferralDetailPage() {
     kycRate: metrics.kycRate,
   }
 
-  const concentration = {
-    top1Share: metrics.feeUsd ? 1 : 0,
-    top3Share: metrics.feeUsd ? 1 : 0,
-  }
+  const [adStart, setAdStart] = React.useState('')
+  const [adEnd, setAdEnd] = React.useState('')
+  const [conversionStart, setConversionStart] = React.useState('')
+  const [conversionEnd, setConversionEnd] = React.useState('')
+  const [adSpendInput, setAdSpendInput] = React.useState('')
+
+  React.useEffect(() => {
+    setAdStart(dateRange.start)
+    setAdEnd(dateRange.end)
+    setConversionStart(dateRange.start)
+    setConversionEnd(dateRange.end)
+  }, [dateRange.start, dateRange.end])
+
+  const adRange = normalizeRange(adStart, adEnd, dateRange)
+  const conversionRange = normalizeRange(conversionStart, conversionEnd, dateRange)
+  const adMetrics = getReferralMetrics(index, code, adRange)
+  const conversionMetrics = getReferralMetrics(index, code, conversionRange)
+
+  const adSpendValue = Number(adSpendInput)
+  const hasSpend = adSpendInput !== '' && Number.isFinite(adSpendValue) && adSpendValue > 0
+  const estimatedFee =
+    adMetrics.signups * conversionMetrics.conversionRate * conversionMetrics.feePerUser
+  const estimatedRoas = hasSpend ? estimatedFee / adSpendValue : null
 
   const dailySignupSeries = React.useMemo(
     () =>
@@ -194,6 +215,104 @@ export function ReferralDetailPage() {
         showConcentration={false}
         showFlags={false}
       />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Ad insertion ROAS estimator</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Ad start</p>
+              <Input
+                type="date"
+                min={bounds.start}
+                max={bounds.end}
+                value={adStart}
+                onChange={(event) => setAdStart(event.target.value)}
+              />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Ad end</p>
+              <Input
+                type="date"
+                min={bounds.start}
+                max={bounds.end}
+                value={adEnd}
+                onChange={(event) => setAdEnd(event.target.value)}
+              />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Ad spend (USD)</p>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={adSpendInput}
+                onChange={(event) => setAdSpendInput(event.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Conversion window start</p>
+              <Input
+                type="date"
+                min={bounds.start}
+                max={bounds.end}
+                value={conversionStart}
+                onChange={(event) => setConversionStart(event.target.value)}
+              />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Conversion window end</p>
+              <Input
+                type="date"
+                min={bounds.start}
+                max={bounds.end}
+                value={conversionEnd}
+                onChange={(event) => setConversionEnd(event.target.value)}
+              />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Signups in ad window</p>
+              <p className="text-lg font-semibold">{formatNumber(adMetrics.signups)}</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Conversion rate</p>
+              <p className="text-lg font-semibold">
+                {formatPercent(conversionMetrics.conversionRate)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Fee per active user</p>
+              <p className="text-lg font-semibold">{formatUsd(conversionMetrics.feePerUser)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Estimated fee</p>
+              <p className="text-lg font-semibold">{formatUsd(estimatedFee)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Estimated ROAS</p>
+              <p className="text-lg font-semibold">
+                {hasSpend && estimatedRoas !== null ? estimatedRoas.toFixed(2) : '—'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
+              Clear spend
+            </Button>
+            <span>Estimated fee = signups × conversion rate × fee per active user</span>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -565,6 +684,13 @@ function buildLogTicks(data: Array<{ bucketMid: number }>, maxTicks = 24) {
   const step = Math.max(1, Math.ceil(remaining.length / Math.max(1, maxTicks - lowTicks.length)))
   const highTicks = remaining.filter((_, index) => index % step === 0)
   return [...lowTicks, ...highTicks]
+}
+
+function normalizeRange(start: string, end: string, fallback: DateRange): DateRange {
+  const startValue = start || fallback.start
+  const endValue = end || fallback.end
+  if (startValue > endValue) return { start: endValue, end: startValue }
+  return { start: startValue, end: endValue }
 }
 
 function formatFeeValue(value: number) {
