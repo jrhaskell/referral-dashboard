@@ -12,6 +12,33 @@ export type NdjsonProgress = {
   revenueTxCount: number
 }
 
+const EXCLUDED_TOKENS = new Set(['uxlink'])
+
+function hasExcludedToken(data: Record<string, any>) {
+  const candidates = [
+    data?.sentAmount?.token?.symbol,
+    data?.sentAmount?.token?.name,
+    data?.sentAmount?.cryptoCurrency?.symbol,
+    data?.sentAmount?.cryptoCurrency?.name,
+    data?.receivedAmount?.token?.symbol,
+    data?.receivedAmount?.token?.name,
+    data?.receivedAmount?.cryptoCurrency?.symbol,
+    data?.receivedAmount?.cryptoCurrency?.name,
+    data?.sentCryptoCurrency?.symbol,
+    data?.sentCryptoCurrency?.name,
+    data?.receivedCryptoCurrency?.symbol,
+    data?.receivedCryptoCurrency?.name,
+    data?.collectedFee?.token?.symbol,
+    data?.collectedFee?.token?.name,
+    data?.collectedFee?.cryptoCurrency?.symbol,
+    data?.collectedFee?.cryptoCurrency?.name,
+  ]
+
+  return candidates.some(
+    (value) => typeof value === 'string' && EXCLUDED_TOKENS.has(value.toLowerCase()),
+  )
+}
+
 export async function parseTransactionsNdjson(
   file: File,
   onRevenueTx: (tx: ParsedRevenueTx) => void,
@@ -41,6 +68,7 @@ export async function parseTransactionsNdjson(
 
     const type = data.type
     if (type !== 'SWAP' && type !== 'CROSS_SWAP') return
+    if (hasExcludedToken(data)) return
     const feeRaw = data?.collectedFee?.amountIn?.usd
     const feeUsd = Number(feeRaw)
     if (!feeUsd || Number.isNaN(feeUsd) || feeUsd <= 0) return

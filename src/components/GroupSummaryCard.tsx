@@ -2,88 +2,104 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { GroupConcentration, GroupSummary } from '@/lib/analytics/groupQueries'
 import { formatNumber, formatPercent, formatUsd } from '@/lib/utils'
 
+type SummaryItem = {
+  label: string
+  value: string
+}
+
 export function GroupSummaryCard({
   summary,
   selectedCount,
   concentration,
-  flags,
+  flags = [],
+  title = 'Group summary',
+  showSelectedCount = true,
+  showConcentration = true,
+  showFlags = true,
 }: {
   summary: GroupSummary
-  selectedCount: number
-  concentration: GroupConcentration
-  flags: string[]
+  selectedCount?: number
+  concentration?: GroupConcentration
+  flags?: string[]
+  title?: string
+  showSelectedCount?: boolean
+  showConcentration?: boolean
+  showFlags?: boolean
 }) {
+  const safeConcentration = concentration ?? { top1Share: 0, top3Share: 0 }
+  const primaryItems: SummaryItem[] = [
+    ...(showSelectedCount
+      ? [{ label: 'Referrals selected', value: formatNumber(selectedCount ?? 0) }]
+      : []),
+    { label: 'Total signups', value: formatNumber(summary.signups) },
+    { label: 'Users with revenue tx', value: formatNumber(summary.usersWithRevenueTx) },
+    { label: 'Total fee USD', value: formatUsd(summary.feeUsd) },
+  ]
+
+  const secondaryItems: SummaryItem[] = [
+    { label: 'KYC users', value: formatNumber(summary.kycUsers) },
+    { label: 'Total volume USD', value: formatUsd(summary.volumeUsd) },
+    { label: 'Conversion rate', value: formatPercent(summary.conversionRate) },
+    { label: 'Fee per active user', value: formatUsd(summary.feePerUser) },
+  ]
+
+  const concentrationItems: SummaryItem[] = [
+    ...(showConcentration
+      ? [
+          { label: 'Top 1 fee share', value: formatPercent(safeConcentration.top1Share) },
+          { label: 'Top 3 fee share', value: formatPercent(safeConcentration.top3Share) },
+        ]
+      : []),
+    { label: 'KYC rate', value: formatPercent(summary.kycRate) },
+  ]
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Group summary</CardTitle>
+        <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 text-sm md:grid-cols-4">
-          <div>
-            <p className="text-xs text-muted-foreground">Referrals selected</p>
-            <p className="text-lg font-semibold">{formatNumber(selectedCount)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Total signups</p>
-            <p className="text-lg font-semibold">{formatNumber(summary.signups)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Users with revenue tx</p>
-            <p className="text-lg font-semibold">{formatNumber(summary.usersWithRevenueTx)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Total fee USD</p>
-            <p className="text-lg font-semibold">{formatUsd(summary.feeUsd)}</p>
-          </div>
+          {primaryItems.map((item) => (
+            <div key={item.label}>
+              <p className="text-xs text-muted-foreground">{item.label}</p>
+              <p className="text-lg font-semibold">{item.value}</p>
+            </div>
+          ))}
         </div>
 
         <div className="grid gap-4 text-sm md:grid-cols-4">
-          <div>
-            <p className="text-xs text-muted-foreground">KYC users</p>
-            <p className="text-lg font-semibold">{formatNumber(summary.kycUsers)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Total volume USD</p>
-            <p className="text-lg font-semibold">{formatUsd(summary.volumeUsd)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Conversion rate</p>
-            <p className="text-lg font-semibold">{formatPercent(summary.conversionRate)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Fee per active user</p>
-            <p className="text-lg font-semibold">{formatUsd(summary.feePerUser)}</p>
-          </div>
+          {secondaryItems.map((item) => (
+            <div key={item.label}>
+              <p className="text-xs text-muted-foreground">{item.label}</p>
+              <p className="text-lg font-semibold">{item.value}</p>
+            </div>
+          ))}
         </div>
 
         <div className="grid gap-4 text-sm md:grid-cols-3">
-          <div>
-            <p className="text-xs text-muted-foreground">Top 1 fee share</p>
-            <p className="text-lg font-semibold">{formatPercent(concentration.top1Share)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Top 3 fee share</p>
-            <p className="text-lg font-semibold">{formatPercent(concentration.top3Share)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">KYC rate</p>
-            <p className="text-lg font-semibold">{formatPercent(summary.kycRate)}</p>
-          </div>
+          {concentrationItems.map((item) => (
+            <div key={item.label}>
+              <p className="text-xs text-muted-foreground">{item.label}</p>
+              <p className="text-lg font-semibold">{item.value}</p>
+            </div>
+          ))}
         </div>
 
-        <div>
-          <p className="text-xs uppercase text-muted-foreground">Insights</p>
-          {flags.length ? (
-            <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-              {flags.map((flag) => (
-                <li key={flag}>{flag}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">No major flags detected.</p>
-          )}
-        </div>
+        {showFlags ? (
+          <div>
+            <p className="text-xs uppercase text-muted-foreground">Insights</p>
+            {flags.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+                {flags.map((flag) => (
+                  <li key={flag}>{flag}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">No major flags detected.</p>
+            )}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )

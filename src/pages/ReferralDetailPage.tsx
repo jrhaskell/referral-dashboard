@@ -4,8 +4,9 @@ import {
   Area,
   AreaChart,
   Bar,
-  BarChart,
   CartesianGrid,
+  ComposedChart,
+  Line,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -17,6 +18,7 @@ import { DailyStackedChart } from '@/components/DailyStackedChart'
 import { DataTable } from '@/components/DataTable'
 import { DateRangePicker } from '@/components/DateRangePicker'
 import { DebugPanel } from '@/components/DebugPanel'
+import { GroupSummaryCard } from '@/components/GroupSummaryCard'
 import { KpiCard } from '@/components/KpiCard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -64,6 +66,22 @@ export function ReferralDetailPage() {
   const dailySeries = getDailySeries(index, code, dateRange)
   const users = Array.from(referral.users.values())
 
+  const summary = {
+    signups: metrics.signups,
+    kycUsers: metrics.kycUsers,
+    usersWithRevenueTx: metrics.usersWithRevenueTx,
+    volumeUsd: metrics.volumeUsd,
+    feeUsd: metrics.feeUsd,
+    conversionRate: metrics.conversionRate,
+    feePerUser: metrics.feePerUser,
+    kycRate: metrics.kycRate,
+  }
+
+  const concentration = {
+    top1Share: metrics.feeUsd ? 1 : 0,
+    top3Share: metrics.feeUsd ? 1 : 0,
+  }
+
   const dailySignupSeries = React.useMemo(
     () =>
       buildDailyStackedSeries({
@@ -92,10 +110,11 @@ export function ReferralDetailPage() {
 
   const usersWith2PlusTx = users.filter((user) => user.revenueTxCount >= 2).length
 
-  const topUsers = users
+  const allUsers = users
     .filter((user) => user.revenueTxCount > 0)
     .sort((a, b) => b.feeUsd - a.feeUsd)
-    .slice(0, 20)
+
+  const topUsersForFlags = allUsers.slice(0, 5)
 
   const [txPage, setTxPage] = React.useState(0)
   const pageSize = 20
@@ -107,7 +126,7 @@ export function ReferralDetailPage() {
 
   const feeDistribution = buildFeeDistribution(users)
 
-  const topUsersFeeShare = topUsers.reduce((sum, user) => sum + user.feeUsd, 0)
+  const topUsersFeeShare = topUsersForFlags.reduce((sum, user) => sum + user.feeUsd, 0)
   const feeConcentration = referral.feeUsdTotal ? topUsersFeeShare / referral.feeUsdTotal : 0
 
   const signupValues = Array.from(referral.signupsByDate.values())
@@ -134,7 +153,7 @@ export function ReferralDetailPage() {
       'First Tx At',
       'Time to First Tx (days)',
     ])
-    const body = topUsers
+    const body = allUsers
       .map((user) =>
         toCsvRow([
           user.wallet,
@@ -146,7 +165,7 @@ export function ReferralDetailPage() {
         ]),
       )
       .join('\n')
-    downloadFile(`referral-${code}-top-users.csv`, `${header}\n${body}`, 'text/csv')
+    downloadFile(`referral-${code}-users.csv`, `${header}\n${body}`, 'text/csv')
   }
 
   return (
@@ -167,6 +186,14 @@ export function ReferralDetailPage() {
         <KpiCard title="Users with revenue" value={formatNumber(metrics.usersWithRevenueTx)} />
         <KpiCard title="Retention 30d" value={formatPercent(metrics.retention30d)} />
       </div>
+
+      <GroupSummaryCard
+        title="Referral summary"
+        summary={summary}
+        showSelectedCount={false}
+        showConcentration={false}
+        showFlags={false}
+      />
 
       <Card>
         <CardHeader>
@@ -240,51 +267,69 @@ export function ReferralDetailPage() {
           <CardTitle>Fee per user distribution</CardTitle>
         </CardHeader>
         <CardContent className="h-64">
-          <div className="h-full overflow-x-auto">
-            <div style={{ width: feeDistribution.chartWidth, height: '100%' }}>
-              <BarChart
-                width={feeDistribution.chartWidth}
-                height={240}
-                data={feeDistribution.data}
-                margin={{ left: 8, right: 8, top: 16, bottom: 0 }}
-                barCategoryGap="20%"
-                barGap={1}
-                barSize={6}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="bucket" tick={{ fontSize: 12 }} interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value: number | string | undefined) => formatNumber(Number(value ?? 0))} />
-                {feeDistribution.averageLabel ? (
-                  <ReferenceLine
-                    x={feeDistribution.averageLabel}
-                    stroke="#0ea5e9"
-                    strokeDasharray="4 4"
-                    label={{
-                      value: `Avg ${formatUsd(feeDistribution.average)}`,
-                      position: 'top',
-                      fill: '#0ea5e9',
-                      fontSize: 12,
-                    }}
-                  />
-                ) : null}
-                {feeDistribution.medianLabel ? (
-                  <ReferenceLine
-                    x={feeDistribution.medianLabel}
-                    stroke="#f97316"
-                    strokeDasharray="4 4"
-                    label={{
-                      value: `Median ${formatUsd(feeDistribution.median)}`,
-                      position: 'top',
-                      fill: '#f97316',
-                      fontSize: 12,
-                    }}
-                  />
-                ) : null}
-                <Bar dataKey="users" fill="#6366f1" />
-              </BarChart>
-            </div>
-          </div>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={feeDistribution.data}
+              margin={{ left: 8, right: 24, top: 16, bottom: 0 }}
+              barCategoryGap="25%"
+              barGap={2}
+              barSize={9}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                type="number"
+                dataKey="bucketMid"
+                scale="log"
+                domain={[feeDistribution.minPosition, 'dataMax']}
+                ticks={feeDistribution.ticks}
+                tick={{ fontSize: 12 }}
+                tickFormatter={(value) => formatFeeValue(Number(value))}
+              />
+              <YAxis tick={{ fontSize: 12 }} />
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null
+                  const row = payload[0]?.payload as { bucket?: string; users?: number }
+                  return (
+                    <div className="rounded-md border bg-popover p-2 text-xs shadow">
+                      <div className="font-semibold">{row.bucket}</div>
+                      <div className="text-muted-foreground">
+                        Users: {formatNumber(Number(row.users ?? 0))}
+                      </div>
+                    </div>
+                  )
+                }}
+              />
+              {feeDistribution.averagePosition ? (
+                <ReferenceLine
+                  x={feeDistribution.averagePosition}
+                  stroke="#0ea5e9"
+                  strokeDasharray="4 4"
+                  label={{
+                    value: `Avg ${formatUsd(feeDistribution.average)}`,
+                    position: 'top',
+                    fill: '#0ea5e9',
+                    fontSize: 12,
+                  }}
+                />
+              ) : null}
+              {feeDistribution.medianPosition ? (
+                <ReferenceLine
+                  x={feeDistribution.medianPosition}
+                  stroke="#f97316"
+                  strokeDasharray="4 4"
+                  label={{
+                    value: `Median ${formatUsd(feeDistribution.median)}`,
+                    position: 'top',
+                    fill: '#f97316',
+                    fontSize: 12,
+                  }}
+                />
+              ) : null}
+              <Bar dataKey="users" fill="#6366f1" minPointSize={2} />
+              <Line type="monotone" dataKey="users" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
         </CardContent>
       </Card>
 
@@ -296,7 +341,7 @@ export function ReferralDetailPage() {
           </Button>
         </CardHeader>
         <CardContent>
-          <DataTable columns={buildTopUsersColumns()} data={topUsers} />
+          <DataTable columns={buildTopUsersColumns()} data={allUsers} enablePagination pageSize={20} />
         </CardContent>
       </Card>
 
@@ -443,23 +488,30 @@ function buildFeeDistribution(users: UserAgg[]) {
     .sort((a, b) => a - b)
 
   const maxFee = fees[fees.length - 1] ?? 0
-  const bucketSize = pickBucketSize()
-  const bucketCount = Math.max(1, Math.floor(maxFee / bucketSize) + 1)
+  const bucketEdges = buildBucketEdges(maxFee)
 
-  const counts = new Array(bucketCount).fill(0)
+  const counts = new Array(bucketEdges.length - 1).fill(0)
   fees.forEach((fee) => {
-    const index = Math.min(Math.floor(fee / bucketSize), bucketCount - 1)
-    counts[index] = (counts[index] ?? 0) + 1
+    const index = bucketEdges.findIndex((edge, idx) => {
+      const nextEdge = bucketEdges[idx + 1]
+      if (nextEdge === undefined) return false
+      if (idx === bucketEdges.length - 2) return fee >= edge && fee <= nextEdge
+      return fee >= edge && fee < nextEdge
+    })
+    if (index >= 0) counts[index] = (counts[index] ?? 0) + 1
   })
 
   const data = counts.map((count, index) => {
-    const start = index * bucketSize
-    const end = (index + 1) * bucketSize
-    const startLabel = formatBucketValue(start, bucketSize)
-    const endLabel = formatBucketValue(end, bucketSize)
+    const start = bucketEdges[index]
+    const end = bucketEdges[index + 1]
+    const startLabel = formatFeeValue(start)
+    const endLabel = formatFeeValue(end)
     const label = `${startLabel}-${endLabel}`
-    return { bucket: label, users: count, start, end }
+    const bucketMid = start === 0 ? end / 2 : Math.sqrt(start * end)
+    return { bucket: label, users: count, start, end, bucketMid }
   })
+
+  const ticks = buildLogTicks(data)
 
   const average = fees.length ? fees.reduce((sum, fee) => sum + fee, 0) / fees.length : 0
   const median = fees.length
@@ -468,27 +520,56 @@ function buildFeeDistribution(users: UserAgg[]) {
       : (fees[fees.length / 2 - 1] + fees[fees.length / 2]) / 2
     : 0
 
-  const averageLabel = fees.length ? findBucketLabel(data, average) : null
-  const medianLabel = fees.length ? findBucketLabel(data, median) : null
-  const chartWidth = Math.max(640, data.length * 24)
+  const minPosition = data[0]?.bucketMid ?? 0.1
+  const averagePosition = fees.length ? Math.max(average, minPosition) : minPosition
+  const medianPosition = fees.length ? Math.max(median, minPosition) : minPosition
 
-  return { data, average, median, averageLabel, medianLabel, chartWidth }
+  return {
+    data,
+    ticks,
+    average,
+    median,
+    averagePosition,
+    medianPosition,
+    minPosition,
+  }
 }
 
-function pickBucketSize() {
-  return 0.5
+function buildBucketEdges(maxFee: number) {
+  const edges = [0]
+  const bases = [1, 2, 5]
+  let power = -1
+
+  while (edges[edges.length - 1] < maxFee) {
+    const scale = Math.pow(10, power)
+    bases.forEach((base) => {
+      const value = Number((base * scale).toFixed(8))
+      if (value > edges[edges.length - 1]) edges.push(value)
+    })
+    power += 1
+    if (power > 8) break
+  }
+
+  if (edges[edges.length - 1] < maxFee) {
+    edges.push(maxFee)
+  }
+
+  return edges
 }
 
-function formatBucketValue(value: number, bucketSize: number) {
-  if (bucketSize < 1) return value.toFixed(2)
-  if (bucketSize < 10) return value.toFixed(1)
+function buildLogTicks(data: Array<{ bucketMid: number }>, maxTicks = 24) {
+  if (!data.length) return []
+  const lowCutoff = 5
+  const lowTicks = data.filter((row) => row.bucketMid <= lowCutoff).map((row) => row.bucketMid)
+  const remaining = data.filter((row) => row.bucketMid > lowCutoff).map((row) => row.bucketMid)
+  const step = Math.max(1, Math.ceil(remaining.length / Math.max(1, maxTicks - lowTicks.length)))
+  const highTicks = remaining.filter((_, index) => index % step === 0)
+  return [...lowTicks, ...highTicks]
+}
+
+function formatFeeValue(value: number) {
+  if (value < 1) return value.toFixed(2)
+  if (value < 10) return value.toFixed(1)
+  if (value < 100) return value.toFixed(0)
   return Math.round(value).toString()
-}
-
-function findBucketLabel(data: Array<{ bucket: string; start: number; end: number }>, value: number) {
-  const match = data.find((row, index) => {
-    if (index === data.length - 1) return value >= row.start && value <= row.end
-    return value >= row.start && value < row.end
-  })
-  return match?.bucket ?? null
 }
