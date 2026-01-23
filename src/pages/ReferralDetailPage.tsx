@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useParams } from 'react-router-dom'
+import { format, subDays } from 'date-fns'
 import {
   Area,
   AreaChart,
@@ -81,27 +82,30 @@ export function ReferralDetailPage() {
 
   const [adStart, setAdStart] = React.useState('')
   const [adEnd, setAdEnd] = React.useState('')
-  const [conversionStart, setConversionStart] = React.useState('')
-  const [conversionEnd, setConversionEnd] = React.useState('')
   const [adSpendInput, setAdSpendInput] = React.useState('')
+  const [lifetimeMonthsInput, setLifetimeMonthsInput] = React.useState('1')
 
   React.useEffect(() => {
     setAdStart(dateRange.start)
     setAdEnd(dateRange.end)
-    setConversionStart(dateRange.start)
-    setConversionEnd(dateRange.end)
   }, [dateRange.start, dateRange.end])
 
   const adRange = normalizeRange(adStart, adEnd, dateRange)
-  const conversionRange = normalizeRange(conversionStart, conversionEnd, dateRange)
   const adMetrics = getReferralMetrics(index, code, adRange)
-  const conversionMetrics = getReferralMetrics(index, code, conversionRange)
+
+  const arpuRange = buildLast30Range(adEnd, bounds.start, bounds.end)
+  const arpuMetrics = getReferralMetrics(index, code, arpuRange)
 
   const adSpendValue = Number(adSpendInput)
   const hasSpend = adSpendInput !== '' && Number.isFinite(adSpendValue) && adSpendValue > 0
-  const estimatedFee =
-    adMetrics.signups * conversionMetrics.conversionRate * conversionMetrics.feePerUser
-  const estimatedRoas = hasSpend ? estimatedFee / adSpendValue : null
+  const lifetimeMonthsValue = Number(lifetimeMonthsInput)
+  const lifetimeMonths =
+    Number.isFinite(lifetimeMonthsValue) && lifetimeMonthsValue > 0 ? lifetimeMonthsValue : 0
+  const lifetimeArpu = arpuMetrics.feePerUser * lifetimeMonths
+  const estimatedActiveUsers = adMetrics.signups * arpuMetrics.kycRate
+  const estimatedFee = estimatedActiveUsers * lifetimeArpu
+
+  const estimatedRoas = hasSpend && lifetimeMonths ? estimatedFee / adSpendValue : null
 
   const dailySignupSeries = React.useMemo(
     () =>
@@ -257,59 +261,61 @@ export function ReferralDetailPage() {
 
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <p className="text-xs text-muted-foreground">Conversion window start</p>
+              <p className="text-xs text-muted-foreground">Lifetime months</p>
               <Input
-                type="date"
-                min={bounds.start}
-                max={bounds.end}
-                value={conversionStart}
-                onChange={(event) => setConversionStart(event.target.value)}
-              />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Conversion window end</p>
-              <Input
-                type="date"
-                min={bounds.start}
-                max={bounds.end}
-                value={conversionEnd}
-                onChange={(event) => setConversionEnd(event.target.value)}
+                type="number"
+                step="0.1"
+                min="0"
+                value={lifetimeMonthsInput}
+                onChange={(event) => setLifetimeMonthsInput(event.target.value)}
+                placeholder="1"
               />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Signups in ad window</p>
               <p className="text-lg font-semibold">{formatNumber(adMetrics.signups)}</p>
             </div>
+            <div>
+              <p className="text-xs text-muted-foreground">ARPU avg (last 30d)</p>
+              <p className="text-lg font-semibold">{formatUsd(arpuMetrics.feePerUser)}</p>
+              <p className="text-xs text-muted-foreground">
+                {arpuRange.start} → {arpuRange.end}
+              </p>
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-4">
             <div>
-              <p className="text-xs text-muted-foreground">Conversion rate</p>
-              <p className="text-lg font-semibold">
-                {formatPercent(conversionMetrics.conversionRate)}
-              </p>
+              <p className="text-xs text-muted-foreground">KYC rate</p>
+              <p className="text-lg font-semibold">{formatPercent(arpuMetrics.kycRate)}</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Fee per active user</p>
-              <p className="text-lg font-semibold">{formatUsd(conversionMetrics.feePerUser)}</p>
+              <p className="text-xs text-muted-foreground">Estimated active users</p>
+              <p className="text-lg font-semibold">{formatNumber(estimatedActiveUsers)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Lifetime ARPU</p>
+              <p className="text-lg font-semibold">{formatUsd(lifetimeArpu)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Estimated fee</p>
               <p className="text-lg font-semibold">{formatUsd(estimatedFee)}</p>
             </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
             <div>
               <p className="text-xs text-muted-foreground">Estimated ROAS</p>
               <p className="text-lg font-semibold">
                 {hasSpend && estimatedRoas !== null ? estimatedRoas.toFixed(2) : '—'}
               </p>
             </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
-              Clear spend
-            </Button>
-            <span>Estimated fee = signups × conversion rate × fee per active user</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
+                Clear spend
+              </Button>
+              <span>Estimated fee = signups × KYC rate × ARPU(30d) × lifetime months</span>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -691,6 +697,17 @@ function normalizeRange(start: string, end: string, fallback: DateRange): DateRa
   const endValue = end || fallback.end
   if (startValue > endValue) return { start: endValue, end: startValue }
   return { start: startValue, end: endValue }
+}
+
+function buildLast30Range(adEnd: string, min: string, max: string): DateRange {
+  const endValue = adEnd || max
+  const endDate = new Date(endValue)
+  const startDate = subDays(endDate, 29)
+  const startValue = format(startDate, 'yyyy-MM-dd')
+  return {
+    start: startValue < min ? min : startValue,
+    end: endValue,
+  }
 }
 
 function formatFeeValue(value: number) {

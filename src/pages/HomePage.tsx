@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
+import { format, subDays } from 'date-fns'
 import {
   Area,
   AreaChart,
@@ -56,6 +57,16 @@ export function HomePage() {
     const entries = referralCodes.map((code) => [code, getReferralMetrics(index, code, range)])
     return Object.fromEntries(entries) as Record<string, ReferralMetrics>
   }, [index, referralCodes, range])
+
+  const arpuRange = React.useMemo(() => {
+    if (!bounds) return range
+    return buildLast30Range(range.end, bounds.start, bounds.end)
+  }, [bounds, range])
+
+  const arpuByCode = React.useMemo(() => {
+    const entries = referralCodes.map((code) => [code, getReferralMetrics(index, code, arpuRange)])
+    return Object.fromEntries(entries) as Record<string, ReferralMetrics>
+  }, [index, referralCodes, arpuRange])
 
   const globalMetrics = getReferralMetrics(index, 'all', range)
   const dailySeries = getDailySeries(index, 'all', range)
@@ -155,6 +166,12 @@ export function HomePage() {
       header: variant === 'kyc' ? 'KYC Users' : 'Fee USD',
       cell: ({ row }: any) =>
         variant === 'kyc' ? formatNumber(row.original.kycUsers) : formatUsd(row.original.feeUsd),
+    },
+    {
+      id: 'arpu30d',
+      accessorFn: (row: ReferralMetrics) => arpuByCode[row.code]?.feePerUser ?? 0,
+      header: 'ARPU 30d',
+      cell: ({ row }: any) => formatUsd(arpuByCode[row.original.code]?.feePerUser ?? 0),
     },
     {
       accessorKey: variant === 'quality' ? 'feePerUser' : variant === 'kyc' ? 'kycRate' : 'conversionRate',
@@ -321,4 +338,14 @@ export function HomePage() {
       <DebugPanel index={index} />
     </div>
   )
+}
+
+function buildLast30Range(endDate: string, min: string, max: string): DateRange {
+  const endValue = endDate || max
+  const end = new Date(endValue)
+  const startValue = format(subDays(end, 29), 'yyyy-MM-dd')
+  return {
+    start: startValue < min ? min : startValue,
+    end: endValue,
+  }
 }

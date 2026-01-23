@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
+import { format, subDays } from 'date-fns'
 
 import { DailyStackedChart } from '@/components/DailyStackedChart'
 import { DataTable } from '@/components/DataTable'
@@ -64,6 +65,17 @@ export function GroupsPage() {
     [],
   )
 
+  const buildLast30Range = React.useCallback((endDate: string, min: string, max: string) => {
+    const endValue = endDate || max
+    const end = new Date(endValue)
+    const startValue = format(subDays(end, 29), 'yyyy-MM-dd')
+    return {
+      start: startValue < min ? min : startValue,
+      end: endValue,
+    }
+  }, [])
+
+
   if (!index || !dateRange) {
     return (
       <Card>
@@ -79,6 +91,8 @@ export function GroupsPage() {
 
   const bounds = getRangeBounds(index)
   const range: DateRange = bounds ? dateRange : { start: dateRange.start, end: dateRange.end }
+  const boundsStart = bounds?.start ?? range.start
+  const boundsEnd = bounds?.end ?? range.end
 
   const referralCodes = React.useMemo(() => getReferralList(index), [index])
 
@@ -91,9 +105,8 @@ export function GroupsPage() {
   const [leaderboardQuery, setLeaderboardQuery] = React.useState('')
   const [adStart, setAdStart] = React.useState('')
   const [adEnd, setAdEnd] = React.useState('')
-  const [conversionStart, setConversionStart] = React.useState('')
-  const [conversionEnd, setConversionEnd] = React.useState('')
   const [adSpendInput, setAdSpendInput] = React.useState('')
+  const [lifetimeMonthsInput, setLifetimeMonthsInput] = React.useState('1')
 
   React.useEffect(() => {
     persistSavedGroups(savedGroups)
@@ -102,8 +115,6 @@ export function GroupsPage() {
   React.useEffect(() => {
     setAdStart(range.start)
     setAdEnd(range.end)
-    setConversionStart(range.start)
-    setConversionEnd(range.end)
   }, [range.start, range.end])
 
   const allMetrics = React.useMemo(
@@ -128,20 +139,39 @@ export function GroupsPage() {
   )
 
   const adRange = normalizeRange(adStart, adEnd, range)
-  const conversionRange = normalizeRange(conversionStart, conversionEnd, range)
   const adSummary = React.useMemo(
     () => getGroupSummary(index, adRange, selectedCodes),
     [index, adRange, selectedCodes],
   )
-  const conversionSummary = React.useMemo(
-    () => getGroupSummary(index, conversionRange, selectedCodes),
-    [index, conversionRange, selectedCodes],
+
+  const arpuRange = buildLast30Range(adEnd, boundsStart, boundsEnd)
+  const arpuSummary = React.useMemo(
+    () => getGroupSummary(index, arpuRange, selectedCodes),
+    [index, arpuRange, selectedCodes],
   )
+
+  const leaderboardArpuRange = React.useMemo(
+    () => buildLast30Range(range.end, boundsStart, boundsEnd),
+    [buildLast30Range, range.end, boundsStart, boundsEnd],
+  )
+  const leaderboardArpuMetrics = React.useMemo(() => {
+    const metrics = getGroupLeaderboard(index, leaderboardArpuRange, selectedCodes)
+    return Object.fromEntries(metrics.map((metric) => [metric.code, metric])) as Record<
+      string,
+      ReferralMetrics
+    >
+  }, [index, leaderboardArpuRange, selectedCodes])
 
   const adSpendValue = Number(adSpendInput)
   const hasSpend = adSpendInput !== '' && Number.isFinite(adSpendValue) && adSpendValue > 0
-  const estimatedFee = adSummary.signups * conversionSummary.conversionRate * conversionSummary.feePerUser
-  const estimatedRoas = hasSpend ? estimatedFee / adSpendValue : null
+  const lifetimeMonthsValue = Number(lifetimeMonthsInput)
+  const lifetimeMonths =
+    Number.isFinite(lifetimeMonthsValue) && lifetimeMonthsValue > 0 ? lifetimeMonthsValue : 0
+  const lifetimeArpu = arpuSummary.feePerUser * lifetimeMonths
+  const estimatedActiveUsers = adSummary.signups * arpuSummary.kycRate
+  const estimatedFee = estimatedActiveUsers * lifetimeArpu
+  const estimatedRoas = hasSpend && lifetimeMonths ? estimatedFee / adSpendValue : null
+
 
   const concentration = React.useMemo(() => getGroupConcentration(selectedMetrics), [selectedMetrics])
 
@@ -221,6 +251,13 @@ export function GroupsPage() {
       accessorKey: 'feeUsd',
       header: 'Fee USD',
       cell: ({ row }: { row: { original: ReferralMetrics } }) => formatUsd(row.original.feeUsd),
+    },
+    {
+      id: 'arpu30d',
+      accessorFn: (row: ReferralMetrics) => leaderboardArpuMetrics[row.code]?.feePerUser ?? 0,
+      header: 'ARPU 30d',
+      cell: ({ row }: { row: { original: ReferralMetrics } }) =>
+        formatUsd(leaderboardArpuMetrics[row.original.code]?.feePerUser ?? 0),
     },
     {
       accessorKey: 'conversionRate',
@@ -344,8 +381,8 @@ export function GroupsPage() {
                   <p className="text-xs text-muted-foreground">Ad start</p>
                   <Input
                     type="date"
-                    min={bounds.start}
-                    max={bounds.end}
+                    min={boundsStart}
+                    max={boundsEnd}
                     value={adStart}
                     onChange={(event) => setAdStart(event.target.value)}
                   />
@@ -354,8 +391,8 @@ export function GroupsPage() {
                   <p className="text-xs text-muted-foreground">Ad end</p>
                   <Input
                     type="date"
-                    min={bounds.start}
-                    max={bounds.end}
+                    min={boundsStart}
+                    max={boundsEnd}
                     value={adEnd}
                     onChange={(event) => setAdEnd(event.target.value)}
                   />
@@ -375,59 +412,61 @@ export function GroupsPage() {
 
               <div className="grid gap-4 md:grid-cols-3">
                 <div>
-                  <p className="text-xs text-muted-foreground">Conversion window start</p>
+                  <p className="text-xs text-muted-foreground">Lifetime months</p>
                   <Input
-                    type="date"
-                    min={bounds.start}
-                    max={bounds.end}
-                    value={conversionStart}
-                    onChange={(event) => setConversionStart(event.target.value)}
-                  />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Conversion window end</p>
-                  <Input
-                    type="date"
-                    min={bounds.start}
-                    max={bounds.end}
-                    value={conversionEnd}
-                    onChange={(event) => setConversionEnd(event.target.value)}
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={lifetimeMonthsInput}
+                    onChange={(event) => setLifetimeMonthsInput(event.target.value)}
+                    placeholder="1"
                   />
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Signups in ad window</p>
                   <p className="text-lg font-semibold">{formatNumber(adSummary.signups)}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">ARPU avg (last 30d)</p>
+                  <p className="text-lg font-semibold">{formatUsd(arpuSummary.feePerUser)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {arpuRange.start} → {arpuRange.end}
+                  </p>
+                </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-4">
                 <div>
-                  <p className="text-xs text-muted-foreground">Conversion rate</p>
-                  <p className="text-lg font-semibold">
-                    {formatPercent(conversionSummary.conversionRate)}
-                  </p>
+                  <p className="text-xs text-muted-foreground">KYC rate</p>
+                  <p className="text-lg font-semibold">{formatPercent(arpuSummary.kycRate)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Fee per active user</p>
-                  <p className="text-lg font-semibold">{formatUsd(conversionSummary.feePerUser)}</p>
+                  <p className="text-xs text-muted-foreground">Estimated active users</p>
+                  <p className="text-lg font-semibold">{formatNumber(estimatedActiveUsers)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Lifetime ARPU</p>
+                  <p className="text-lg font-semibold">{formatUsd(lifetimeArpu)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Estimated fee</p>
                   <p className="text-lg font-semibold">{formatUsd(estimatedFee)}</p>
                 </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <p className="text-xs text-muted-foreground">Estimated ROAS</p>
                   <p className="text-lg font-semibold">
                     {hasSpend && estimatedRoas !== null ? estimatedRoas.toFixed(2) : '—'}
                   </p>
                 </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
-                  Clear spend
-                </Button>
-                <span>Estimated fee = signups × conversion rate × fee per active user</span>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
+                    Clear spend
+                  </Button>
+                  <span>Estimated fee = signups × KYC rate × ARPU(30d) × lifetime months</span>
+                </div>
               </div>
             </CardContent>
           </Card>
