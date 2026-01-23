@@ -30,6 +30,10 @@ import { formatNumber, formatPercent, formatUsd } from '@/lib/utils'
 
 type GroupMode = 'totals' | 'compare'
 
+type GroupLeaderboardRow = ReferralMetrics & {
+  isTotal?: boolean
+}
+
 type SavedGroup = {
   id: string
   name: string
@@ -118,12 +122,12 @@ export function GroupsPage() {
   }, [range.start, range.end])
 
   const allMetrics = React.useMemo(
-    () => getGroupLeaderboard(index, range, referralCodes),
+    () => getGroupLeaderboard(index, range, referralCodes) as GroupLeaderboardRow[],
     [index, range, referralCodes],
   )
 
   const selectedMetrics = React.useMemo(
-    () => getGroupLeaderboard(index, range, selectedCodes),
+    () => getGroupLeaderboard(index, range, selectedCodes) as GroupLeaderboardRow[],
     [index, range, selectedCodes],
   )
 
@@ -161,6 +165,55 @@ export function GroupsPage() {
       ReferralMetrics
     >
   }, [index, leaderboardArpuRange, selectedCodes])
+
+  const totalArpuFeePerUser = React.useMemo(() => {
+    if (!filteredMetrics.length) return 0
+    const metrics = filteredMetrics
+      .map((metric) => leaderboardArpuMetrics[metric.code])
+      .filter((metric): metric is ReferralMetrics => Boolean(metric))
+    const totalFee = metrics.reduce((sum, metric) => sum + metric.feeUsd, 0)
+    const totalUsers = metrics.reduce((sum, metric) => sum + metric.usersWithRevenueTx, 0)
+    return totalUsers ? totalFee / totalUsers : 0
+  }, [filteredMetrics, leaderboardArpuMetrics])
+
+  const leaderboardTotals = React.useMemo<GroupLeaderboardRow | null>(() => {
+    if (!filteredMetrics.length) return null
+    const signups = filteredMetrics.reduce((sum, metric) => sum + metric.signups, 0)
+    const kycUsers = filteredMetrics.reduce((sum, metric) => sum + metric.kycUsers, 0)
+    const usersWithRevenueTx = filteredMetrics.reduce(
+      (sum, metric) => sum + metric.usersWithRevenueTx,
+      0,
+    )
+    const volumeUsd = filteredMetrics.reduce((sum, metric) => sum + metric.volumeUsd, 0)
+    const feeUsd = filteredMetrics.reduce((sum, metric) => sum + metric.feeUsd, 0)
+    const firstRevenueTxUsers = filteredMetrics.reduce(
+      (sum, metric) => sum + metric.firstRevenueTxUsers,
+      0,
+    )
+    const conversionRate = signups ? usersWithRevenueTx / signups : 0
+    const feePerUser = usersWithRevenueTx ? feeUsd / usersWithRevenueTx : 0
+    const kycRate = signups ? kycUsers / signups : 0
+    return {
+      code: 'Total',
+      signups,
+      kycUsers,
+      usersWithRevenueTx,
+      firstRevenueTxUsers,
+      feeUsd,
+      volumeUsd,
+      conversionRate,
+      feePerUser,
+      retention30d: 0,
+      timeToFirstTxMedianDays: 0,
+      kycRate,
+      isTotal: true,
+    }
+  }, [filteredMetrics])
+
+  const leaderboardRows = React.useMemo(() => {
+    if (!filteredMetrics.length) return []
+    return leaderboardTotals ? [...filteredMetrics, leaderboardTotals] : filteredMetrics
+  }, [filteredMetrics, leaderboardTotals])
 
   const adSpendValue = Number(adSpendInput)
   const hasSpend = adSpendInput !== '' && Number.isFinite(adSpendValue) && adSpendValue > 0
@@ -225,59 +278,75 @@ export function GroupsPage() {
     return buildGroupStackedSeries(index, range, selectedCodes, 'feeUsd', feeTopN, 'cumulative')
   }, [index, range, selectedCodes, mode, feeTopN])
 
+  const renderLeaderboardValue = (value: React.ReactNode, isTotal?: boolean) =>
+    isTotal ? <span className="font-semibold">{value}</span> : value
+
   const leaderboardColumns = () => [
     {
       accessorKey: 'code',
       header: 'Referral',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) => (
-        <Link className="font-semibold text-primary" to={`/referrals/${row.original.code}`}>
-          {row.original.code}
-        </Link>
-      ),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        row.original.isTotal ? (
+          <span className="font-semibold">{row.original.code}</span>
+        ) : (
+          <Link className="font-semibold text-primary" to={`/referrals/${row.original.code}`}>
+            {row.original.code}
+          </Link>
+        ),
     },
     {
       accessorKey: 'signups',
       header: 'Signups',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) => formatNumber(row.original.signups),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        renderLeaderboardValue(formatNumber(row.original.signups), row.original.isTotal),
     },
     {
       accessorKey: 'kycUsers',
       header: 'KYC',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) => formatNumber(row.original.kycUsers),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        renderLeaderboardValue(formatNumber(row.original.kycUsers), row.original.isTotal),
     },
     {
       accessorKey: 'usersWithRevenueTx',
       header: 'Users w/ revenue',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) =>
-        formatNumber(row.original.usersWithRevenueTx),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        renderLeaderboardValue(formatNumber(row.original.usersWithRevenueTx), row.original.isTotal),
     },
     {
       accessorKey: 'volumeUsd',
       header: 'Volume USD',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) => formatUsd(row.original.volumeUsd),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        renderLeaderboardValue(formatUsd(row.original.volumeUsd), row.original.isTotal),
     },
     {
       accessorKey: 'feeUsd',
       header: 'Fee USD',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) => formatUsd(row.original.feeUsd),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        renderLeaderboardValue(formatUsd(row.original.feeUsd), row.original.isTotal),
     },
     {
       id: 'arpu30d',
-      accessorFn: (row: ReferralMetrics) => leaderboardArpuMetrics[row.code]?.feePerUser ?? 0,
+      accessorFn: (row: GroupLeaderboardRow) =>
+        row.isTotal ? totalArpuFeePerUser : leaderboardArpuMetrics[row.code]?.feePerUser ?? 0,
       header: 'ARPU 30d',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) =>
-        formatUsd(leaderboardArpuMetrics[row.original.code]?.feePerUser ?? 0),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) => {
+        const arpuValue = row.original.isTotal
+          ? totalArpuFeePerUser
+          : leaderboardArpuMetrics[row.original.code]?.feePerUser ?? 0
+        return renderLeaderboardValue(formatUsd(arpuValue), row.original.isTotal)
+      },
     },
     {
       accessorKey: 'conversionRate',
       header: 'Conversion',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) =>
-        formatPercent(row.original.conversionRate),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        renderLeaderboardValue(formatPercent(row.original.conversionRate), row.original.isTotal),
     },
     {
       accessorKey: 'feePerUser',
       header: 'Fee / user',
-      cell: ({ row }: { row: { original: ReferralMetrics } }) => formatUsd(row.original.feePerUser),
+      cell: ({ row }: { row: { original: GroupLeaderboardRow } }) =>
+        renderLeaderboardValue(formatUsd(row.original.feePerUser), row.original.isTotal),
     },
   ]
 
@@ -520,12 +589,13 @@ export function GroupsPage() {
               />
             </CardHeader>
             <CardContent>
-              <DataTable
-                columns={leaderboardColumns()}
-                data={filteredMetrics}
-                enablePagination
-                pageSize={10}
-              />
+                <DataTable
+                  columns={leaderboardColumns()}
+                  data={leaderboardRows}
+                  enablePagination
+                  pageSize={30}
+                />
+
             </CardContent>
           </Card>
         </>
