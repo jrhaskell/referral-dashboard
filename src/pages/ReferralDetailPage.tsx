@@ -102,7 +102,8 @@ export function ReferralDetailPage() {
   const lifetimeMonths =
     Number.isFinite(lifetimeMonthsValue) && lifetimeMonthsValue > 0 ? lifetimeMonthsValue : 0
   const lifetimeArpu = arpuMetrics.feePerUser * lifetimeMonths
-  const estimatedActiveUsers = adMetrics.signups * arpuMetrics.kycRate
+  const estimatorKycRate = metrics.kycRate
+  const estimatedActiveUsers = adMetrics.signups * estimatorKycRate
   const estimatedFee = estimatedActiveUsers * lifetimeArpu
 
   const estimatedRoas = hasSpend && lifetimeMonths ? estimatedFee / adSpendValue : null
@@ -287,7 +288,7 @@ export function ReferralDetailPage() {
           <div className="grid gap-4 md:grid-cols-4">
             <div>
               <p className="text-xs text-muted-foreground">KYC rate</p>
-              <p className="text-lg font-semibold">{formatPercent(arpuMetrics.kycRate)}</p>
+              <p className="text-lg font-semibold">{formatPercent(estimatorKycRate)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Estimated active users</p>

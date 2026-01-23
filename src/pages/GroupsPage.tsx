@@ -168,7 +168,16 @@ export function GroupsPage() {
   const lifetimeMonths =
     Number.isFinite(lifetimeMonthsValue) && lifetimeMonthsValue > 0 ? lifetimeMonthsValue : 0
   const lifetimeArpu = arpuSummary.feePerUser * lifetimeMonths
-  const estimatedActiveUsers = adSummary.signups * arpuSummary.kycRate
+  const estimatorKycRate = React.useMemo(() => {
+    const totalSignups = selectedMetrics.reduce((sum, metric) => sum + metric.signups, 0)
+    if (!totalSignups) return 0
+    const weightedSum = selectedMetrics.reduce(
+      (sum, metric) => sum + metric.kycRate * metric.signups,
+      0,
+    )
+    return weightedSum / totalSignups
+  }, [selectedMetrics])
+  const estimatedActiveUsers = adSummary.signups * estimatorKycRate
   const estimatedFee = estimatedActiveUsers * lifetimeArpu
   const estimatedRoas = hasSpend && lifetimeMonths ? estimatedFee / adSpendValue : null
 
@@ -438,7 +447,7 @@ export function GroupsPage() {
               <div className="grid gap-4 md:grid-cols-4">
                 <div>
                   <p className="text-xs text-muted-foreground">KYC rate</p>
-                  <p className="text-lg font-semibold">{formatPercent(arpuSummary.kycRate)}</p>
+                  <p className="text-lg font-semibold">{formatPercent(estimatorKycRate)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Estimated active users</p>
