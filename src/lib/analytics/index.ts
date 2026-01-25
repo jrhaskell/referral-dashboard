@@ -93,6 +93,7 @@ export type AnalyticsIndex = {
   usersByWallet: Map<string, UserAgg>
   referrals: Map<string, ReferralIndex>
   referralCodes: Map<string, ReferralCodeMeta>
+  ownerUsageDaily: Map<string, Map<string, DailyAgg>>
   global: ReferralIndex
   totals: {
     customers: number
@@ -133,6 +134,10 @@ export type AnalyticsSnapshot = {
   global: SerializedReferral
   referrals: SerializedReferral[]
   referralCodes?: ReferralCodeMeta[]
+  ownerUsageDaily?: Array<{
+    ownerId: string
+    daily: Array<[string, DailyAgg]>
+  }>
 }
 
 export type SerializedReferral = {
@@ -186,6 +191,7 @@ export function createAnalyticsIndex(options: AnalyticsOptions): AnalyticsIndex 
     usersByWallet: new Map(),
     referrals: new Map(),
     referralCodes: new Map(),
+    ownerUsageDaily: new Map(),
     global: createReferralIndex('all'),
     totals: {
       customers: 0,
@@ -267,6 +273,31 @@ export function addReferralCodeMeta(index: AnalyticsIndex, meta: ReferralCodeMet
   const code = meta.code.trim()
   if (!code) return
   index.referralCodes.set(code, { ...meta, code })
+}
+
+export function addOwnerUsageDaily(
+  index: AnalyticsIndex,
+  ownerId: string,
+  dateKey: string,
+  feeUsd: number,
+  volumeUsd: number,
+) {
+  if (!ownerId) return
+  const dailyMap = index.ownerUsageDaily.get(ownerId) ?? new Map<string, DailyAgg>()
+  const existing = dailyMap.get(dateKey)
+  if (existing) {
+    existing.feeUsd += feeUsd
+    existing.volumeUsd += volumeUsd
+    existing.revenueTxCount += 1
+  } else {
+    dailyMap.set(dateKey, {
+      date: dateKey,
+      feeUsd,
+      volumeUsd,
+      revenueTxCount: 1,
+    })
+  }
+  index.ownerUsageDaily.set(ownerId, dailyMap)
 }
 
 export type ParsedRevenueTx = {
@@ -478,6 +509,10 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
       revenueTxCount: referral.revenueTxCount,
     })),
     referralCodes: Array.from(index.referralCodes.values()),
+    ownerUsageDaily: Array.from(index.ownerUsageDaily.entries()).map(([ownerId, daily]) => ({
+      ownerId,
+      daily: Array.from(daily.entries()),
+    })),
   }
 }
 
@@ -521,6 +556,11 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
 
   if (snapshot.referralCodes) {
     index.referralCodes = new Map(snapshot.referralCodes.map((meta) => [meta.code, meta]))
+  }
+  if (snapshot.ownerUsageDaily) {
+    index.ownerUsageDaily = new Map(
+      snapshot.ownerUsageDaily.map((entry) => [entry.ownerId, new Map(entry.daily)]),
+    )
   }
   index.metadata = snapshot.metadata
   index.totals = snapshot.totals

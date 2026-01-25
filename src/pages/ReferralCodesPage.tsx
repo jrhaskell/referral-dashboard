@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { Link } from 'react-router-dom'
 
+import { DailyStackedChart } from '@/components/DailyStackedChart'
 import { DataTable } from '@/components/DataTable'
 import { DateRangePicker } from '@/components/DateRangePicker'
 import { KpiCard } from '@/components/KpiCard'
@@ -25,6 +26,7 @@ import {
   getRangeBounds,
   getReferralMetrics,
   type AnalyticsIndex,
+  type DailyAgg,
   type DateRange,
   type ReferralCodeMeta,
 } from '@/lib/analytics'
@@ -62,7 +64,20 @@ const matchesOptionalRange = (
   return matchesRange(value, min, max)
 }
 
+const isDateInRange = (date: string, range: DateRange) =>
+  date >= range.start && date <= range.end
+
+const sumOwnerUsageByRange = (dailyMap: Map<string, DailyAgg> | undefined, range: DateRange) => {
+  if (!dailyMap) return 0
+  let total = 0
+  dailyMap.forEach((value, date) => {
+    if (isDateInRange(date, range)) total += value.feeUsd
+  })
+  return total
+}
+
 type ReferralCodeRow = {
+
 
   code: string
   note: string
@@ -82,6 +97,7 @@ type ReferralCodeRow = {
   signups: number
   usersWithRevenueTx: number
   feeUsd: number
+  volumeUsd: number
   conversionRate: number
   feePerUser: number
 }
@@ -104,6 +120,8 @@ export function ReferralCodesPage() {
   const [signupsMax, setSignupsMax] = React.useState('')
   const [feeMin, setFeeMin] = React.useState('')
   const [feeMax, setFeeMax] = React.useState('')
+  const [ownerUsageMin, setOwnerUsageMin] = React.useState('')
+  const [ownerUsageMax, setOwnerUsageMax] = React.useState('')
   const [arpuMin, setArpuMin] = React.useState('')
   const [arpuMax, setArpuMax] = React.useState('')
   const [conversionMin, setConversionMin] = React.useState('')
@@ -135,6 +153,16 @@ export function ReferralCodesPage() {
     return referralCodes.map((meta) => buildReferralRow(meta, index, range, now))
   }, [referralCodes, index, range])
 
+  const ownerUsageFeeById = React.useMemo(() => {
+    const map = new Map<string, number>()
+    referralCodes.forEach((meta) => {
+      if (!meta.createdBy || map.has(meta.createdBy)) return
+      const dailyMap = index.ownerUsageDaily.get(meta.createdBy)
+      map.set(meta.createdBy, sumOwnerUsageByRange(dailyMap, range))
+    })
+    return map
+  }, [referralCodes, index, range])
+
   const filteredRows = React.useMemo(() => {
     const normalizedCode = codeFilter.trim().toLowerCase()
     const normalizedNote = noteFilter.trim().toLowerCase()
@@ -149,6 +177,8 @@ export function ReferralCodesPage() {
     const signupsMaxValue = parseFilterNumber(signupsMax)
     const feeMinValue = parseFilterNumber(feeMin)
     const feeMaxValue = parseFilterNumber(feeMax)
+    const ownerUsageMinValue = parseFilterNumber(ownerUsageMin)
+    const ownerUsageMaxValue = parseFilterNumber(ownerUsageMax)
     const arpuMinValue = parseFilterNumber(arpuMin)
     const arpuMaxValue = parseFilterNumber(arpuMax)
     const conversionMinValue = parseFilterPercent(conversionMin)
@@ -170,6 +200,10 @@ export function ReferralCodesPage() {
       if (!matchesOptionalRange(row.usageRate, usageRateMinValue, usageRateMaxValue)) return false
       if (!matchesRange(row.signups, signupsMinValue, signupsMaxValue)) return false
       if (!matchesRange(row.feeUsd, feeMinValue, feeMaxValue)) return false
+
+      const ownerUsageFee = row.createdBy ? (ownerUsageFeeById.get(row.createdBy) ?? 0) : 0
+      if (!matchesRange(ownerUsageFee, ownerUsageMinValue, ownerUsageMaxValue)) return false
+
       if (!matchesRange(row.feePerUser, arpuMinValue, arpuMaxValue)) return false
       if (!matchesRange(row.conversionRate, conversionMinValue, conversionMaxValue)) return false
 
@@ -180,6 +214,7 @@ export function ReferralCodesPage() {
     })
   }, [
     rows,
+    ownerUsageFeeById,
     codeFilter,
     ownerPresence,
     noteFilter,
@@ -195,6 +230,8 @@ export function ReferralCodesPage() {
     signupsMax,
     feeMin,
     feeMax,
+    ownerUsageMin,
+    ownerUsageMax,
     arpuMin,
     arpuMax,
     conversionMin,
@@ -276,6 +313,117 @@ export function ReferralCodesPage() {
     })
   }, [filteredRows, range, bounds])
 
+  const ownerFeeSummary = React.useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        ownerLabel: string
+        ownerType: string
+        codeFeeUsd: number
+        ownerFeeUsd: number
+        codes: number
+      }
+    >()
+
+    filteredRows.forEach((row) => {
+      const ownerId = row.createdBy ?? 'none'
+      const ownerFeeUsd = row.createdBy ? (ownerUsageFeeById.get(row.createdBy) ?? 0) : 0
+      const current =
+        map.get(ownerId) ??
+        ({
+          ownerLabel: row.ownerLabel,
+          ownerType: row.ownerType,
+          codeFeeUsd: 0,
+          ownerFeeUsd,
+          codes: 0,
+        } as {
+          ownerLabel: string
+          ownerType: string
+          codeFeeUsd: number
+          ownerFeeUsd: number
+          codes: number
+        })
+      current.codeFeeUsd += row.feeUsd
+      current.codes += 1
+      map.set(ownerId, current)
+    })
+
+    return { map }
+  }, [filteredRows, ownerUsageFeeById])
+
+  const ownerUsageSeries = React.useMemo(() => {
+    if (!bounds) return { data: [], keys: [] as string[] }
+
+    const ownerMap = new Map<string, string>()
+    filteredRows.forEach((row) => {
+      if (!row.createdBy) return
+      if (!ownerMap.has(row.createdBy)) ownerMap.set(row.createdBy, row.ownerLabel)
+    })
+
+    const ownerTotals = Array.from(ownerMap.entries()).map(([ownerId, label]) => ({
+      ownerId,
+      label,
+      total: ownerUsageFeeById.get(ownerId) ?? 0,
+    }))
+    ownerTotals.sort((a, b) => b.total - a.total)
+
+    const topOwners = ownerTotals.slice(0, 6)
+    const restOwners = ownerTotals.slice(6)
+
+    const usedLabels = new Map<string, number>()
+    const labelMap = new Map<string, string>()
+    topOwners.forEach((owner) => {
+      const base = owner.label || owner.ownerId
+      const count = usedLabels.get(base) ?? 0
+      usedLabels.set(base, count + 1)
+      const label = count ? `${base} (${owner.ownerId.slice(0, 4)})` : base
+      labelMap.set(owner.ownerId, label)
+    })
+
+    const keys = topOwners
+      .map((owner) => labelMap.get(owner.ownerId))
+      .filter((value): value is string => Boolean(value))
+
+    const includeOther = restOwners.some((owner) => owner.total > 0)
+    if (includeOther) keys.push('OTHER')
+
+    const start = new Date(range.start)
+    const end = new Date(range.end)
+    const data = eachDayOfInterval({ start, end }).map((day) => {
+      const dateKey = format(day, 'yyyy-MM-dd')
+      const row: Record<string, number | string> = {
+        date: dateKey,
+        total: 0,
+        totalLine: 0,
+      }
+
+      let total = 0
+      topOwners.forEach((owner) => {
+        const label = labelMap.get(owner.ownerId)
+        if (!label) return
+        const dailyMap = index.ownerUsageDaily.get(owner.ownerId)
+        const value = dailyMap?.get(dateKey)?.feeUsd ?? 0
+        row[label] = value
+        total += value
+      })
+
+      if (includeOther) {
+        const otherTotal = restOwners.reduce((sum, owner) => {
+          const dailyMap = index.ownerUsageDaily.get(owner.ownerId)
+          return sum + (dailyMap?.get(dateKey)?.feeUsd ?? 0)
+        }, 0)
+        row.OTHER = otherTotal
+        total += otherTotal
+      }
+
+      row.total = total
+      row.totalLine = total
+      return row
+    })
+
+    return { data, keys }
+  }, [bounds, filteredRows, ownerUsageFeeById, index, range])
+
   const handleCopyCodes = async () => {
     const codes = filteredRows.map((row) => row.code).join('\n')
     if (!codes) {
@@ -317,12 +465,17 @@ export function ReferralCodesPage() {
       'Signups',
       'Users With Revenue',
       'Fee USD',
+      'Volume USD',
+      'Owner Code Fee USD',
+      'Owner Usage Fee USD',
       'Conversion Rate',
       'ARPU',
     ])
 
-    const rows = filteredRows.map((row) =>
-      toCsvRow([
+    const rows = filteredRows.map((row) => {
+      const ownerKey = row.createdBy ?? 'none'
+      const ownerSummary = ownerFeeSummary.map.get(ownerKey)
+      return toCsvRow([
         row.code,
         row.note,
         row.uses,
@@ -340,10 +493,13 @@ export function ReferralCodesPage() {
         row.signups,
         row.usersWithRevenueTx,
         row.feeUsd,
+        row.volumeUsd,
+        ownerSummary?.codeFeeUsd ?? 0,
+        ownerSummary?.ownerFeeUsd ?? 0,
         row.conversionRate,
         row.feePerUser,
-      ]),
-    )
+      ])
+    })
 
     const filename = `referral-codes-${format(new Date(), 'yyyy-MM-dd')}.csv`
     downloadFile(filename, `${header}\n${rows.join('\n')}`, 'text/csv')
@@ -365,6 +521,8 @@ export function ReferralCodesPage() {
     setSignupsMax('')
     setFeeMin('')
     setFeeMax('')
+    setOwnerUsageMin('')
+    setOwnerUsageMax('')
     setArpuMin('')
     setArpuMax('')
     setConversionMin('')
@@ -427,6 +585,35 @@ export function ReferralCodesPage() {
       accessorKey: 'feeUsd',
       header: 'Fee USD',
       cell: ({ row }: { row: { original: ReferralCodeRow } }) => formatUsd(row.original.feeUsd),
+    },
+    {
+      accessorKey: 'volumeUsd',
+      header: 'Volume USD',
+      cell: ({ row }: { row: { original: ReferralCodeRow } }) => formatUsd(row.original.volumeUsd),
+    },
+    {
+      id: 'ownerCodeFeeUsd',
+      accessorFn: (row: ReferralCodeRow) => {
+        const ownerKey = row.createdBy ?? 'none'
+        return ownerFeeSummary.map.get(ownerKey)?.codeFeeUsd ?? 0
+      },
+      header: 'Owner code fee',
+      cell: ({ row }: { row: { original: ReferralCodeRow } }) => {
+        const ownerKey = row.original.createdBy ?? 'none'
+        return formatUsd(ownerFeeSummary.map.get(ownerKey)?.codeFeeUsd ?? 0)
+      },
+    },
+    {
+      id: 'ownerUsageFeeUsd',
+      accessorFn: (row: ReferralCodeRow) => {
+        const ownerKey = row.createdBy ?? 'none'
+        return ownerFeeSummary.map.get(ownerKey)?.ownerFeeUsd ?? 0
+      },
+      header: 'Owner usage fee',
+      cell: ({ row }: { row: { original: ReferralCodeRow } }) => {
+        const ownerKey = row.original.createdBy ?? 'none'
+        return formatUsd(ownerFeeSummary.map.get(ownerKey)?.ownerFeeUsd ?? 0)
+      },
     },
     {
       accessorKey: 'feePerUser',
@@ -526,47 +713,56 @@ export function ReferralCodesPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Uses by code creation date</CardTitle>
-        </CardHeader>
-        <CardContent className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={usesSeries} margin={{ left: 8, right: 16, top: 16, bottom: 0 }}>
-              <defs>
-                <linearGradient id="codes-uses" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" tick={{ fontSize: 12 }} tickFormatter={(value) => value.slice(5)} />
-              <YAxis
-                yAxisId="left"
-                tick={{ fontSize: 12 }}
-                tickFormatter={(value) => formatNumber(Number(value ?? 0))}
-                allowDecimals={false}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tick={{ fontSize: 12 }}
-                tickFormatter={(value) => formatNumber(Number(value ?? 0))}
-                allowDecimals={false}
-              />
-              <Tooltip
-                formatter={(value: number | string | undefined, name) => [
-                  formatNumber(Number(value ?? 0)),
-                  name === 'usesTotal' ? 'Sum uses' : 'Uses',
-                ]}
-                labelFormatter={(label) => `Date ${label}`}
-              />
-              <Area yAxisId="left" type="monotone" dataKey="uses" stroke="#22c55e" fill="url(#codes-uses)" />
-              <Line yAxisId="right" type="monotone" dataKey="usesTotal" stroke="#0f766e" strokeWidth={2} dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Uses by code creation date</CardTitle>
+          </CardHeader>
+          <CardContent className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={usesSeries} margin={{ left: 8, right: 16, top: 16, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="codes-uses" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#22c55e" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} tickFormatter={(value) => value.slice(5)} />
+                <YAxis
+                  yAxisId="left"
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(value) => formatNumber(Number(value ?? 0))}
+                  allowDecimals={false}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(value) => formatNumber(Number(value ?? 0))}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  formatter={(value: number | string | undefined, name) => [
+                    formatNumber(Number(value ?? 0)),
+                    name === 'usesTotal' ? 'Sum uses' : 'Uses',
+                  ]}
+                  labelFormatter={(label) => `Date ${label}`}
+                />
+                <Area yAxisId="left" type="monotone" dataKey="uses" stroke="#22c55e" fill="url(#codes-uses)" />
+                <Line yAxisId="right" type="monotone" dataKey="usesTotal" stroke="#0f766e" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <DailyStackedChart
+          title="Owner usage fee by day"
+          metric="feeUsd"
+          data={ownerUsageSeries.data}
+          keys={ownerUsageSeries.keys}
+          lineKey="totalLine"
+        />
+
 
       <Card>
         <CardHeader>
@@ -677,6 +873,14 @@ export function ReferralCodesPage() {
               step="0.01"
             />
             <RangeFilter
+              label="Owner usage fee"
+              minValue={ownerUsageMin}
+              maxValue={ownerUsageMax}
+              onMinChange={setOwnerUsageMin}
+              onMaxChange={setOwnerUsageMax}
+              step="0.01"
+            />
+            <RangeFilter
               label="ARPU"
               minValue={arpuMin}
               maxValue={arpuMax}
@@ -773,9 +977,10 @@ function buildReferralRow(
 ): ReferralCodeRow {
   const metrics = getReferralMetrics(index, meta.code, range)
   const owner = meta.createdBy ? index.customersById.get(meta.createdBy) : undefined
-  const ownerLabel = owner?.email || meta.createdBy || '—'
+  const ownerLabel = owner?.email || meta.createdBy || 'No owner'
   const ownerType = owner ? 'Customer' : meta.createdBy ? 'External' : 'Campaign'
   const usageRate = meta.maxUses ? meta.uses / meta.maxUses : null
+
   const status = buildStatus(meta, now)
   const isLive = status === 'Active'
   return {
@@ -797,6 +1002,7 @@ function buildReferralRow(
     signups: metrics.signups,
     usersWithRevenueTx: metrics.usersWithRevenueTx,
     feeUsd: metrics.feeUsd,
+    volumeUsd: metrics.volumeUsd,
     conversionRate: metrics.conversionRate,
     feePerUser: metrics.feePerUser,
   }

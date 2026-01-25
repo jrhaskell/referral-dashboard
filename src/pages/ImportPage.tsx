@@ -9,10 +9,12 @@ import { Progress } from '@/components/ui/progress'
 import { Switch } from '@/components/ui/switch'
 import {
   addCustomer,
+  addOwnerUsageDaily,
   addReferralCodeMeta,
   addRevenueTransaction,
   createAnalyticsIndex,
   deserializeIndex,
+  toDateKey,
   type FileMeta,
   serializeIndex,
 } from '@/lib/analytics'
@@ -130,10 +132,26 @@ export function ImportPage() {
       referralResult.codes.forEach((meta) => addReferralCodeMeta(index, meta))
       csvResult.customers.forEach((customer) => addCustomer(index, customer))
 
+      const ownerWallets = new Map<string, string>()
+      referralResult.codes.forEach((meta) => {
+        if (!meta.createdBy) return
+        const owner = index.customersById.get(meta.createdBy)
+        if (!owner) return
+        if (owner.smartWallet) ownerWallets.set(owner.smartWallet, meta.createdBy)
+        if (owner.eoa) ownerWallets.set(owner.eoa, meta.createdBy)
+      })
+
       setStatus('Streaming NDJSON transactions…')
       const ndjsonResult = await parseTransactionsNdjson(
         txFile,
-        (tx) => addRevenueTransaction(index, tx),
+        (tx) => {
+          addRevenueTransaction(index, tx)
+          const ownerId = ownerWallets.get(tx.wallet)
+          if (ownerId) {
+            const dateKey = toDateKey(tx.createdAt)
+            addOwnerUsageDaily(index, ownerId, dateKey, tx.feeUsd, tx.volumeUsd)
+          }
+        },
         (progress) => {
           setNdjsonProgress({ lines: progress.lines, bytes: progress.bytes, revenue: progress.revenueTxCount })
           index.totals.txLines = progress.lines
