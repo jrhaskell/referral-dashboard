@@ -141,69 +141,94 @@ export function HomePage() {
     downloadFile('referral-snapshot.json', JSON.stringify(snapshot, null, 2), 'application/json')
   }
 
-  const leaderboardColumns = (variant: 'revenue' | 'quality' | 'conversion' | 'kyc') => [
-    {
-      accessorKey: 'code',
-      header: 'Referral',
-      cell: ({ row }: any) => (
-        <Link className="font-semibold text-primary" to={`/referral-detail/${row.original.code}`}>
-          {row.original.code}
-        </Link>
-      ),
-    },
-    {
-      accessorKey: 'signups',
-      header: 'Signups',
-      cell: ({ row }: any) => formatNumber(row.original.signups),
-    },
-    {
-      accessorKey: 'usersWithRevenueTx',
-      header: 'Users w/ Revenue',
-      cell: ({ row }: any) => formatNumber(row.original.usersWithRevenueTx),
-    },
-    {
-      accessorKey: variant === 'kyc' ? 'kycUsers' : 'feeUsd',
-      header: variant === 'kyc' ? 'KYC Users' : 'Fee USD',
-      cell: ({ row }: any) =>
-        variant === 'kyc' ? formatNumber(row.original.kycUsers) : formatUsd(row.original.feeUsd),
-    },
-    {
-      id: 'arpu30d',
-      accessorFn: (row: ReferralMetrics) => arpuByCode[row.code]?.feePerUser ?? 0,
-      header: 'ARPU 30d',
-      cell: ({ row }: any) => formatUsd(arpuByCode[row.original.code]?.feePerUser ?? 0),
-    },
-    {
-      accessorKey: variant === 'quality' ? 'feePerUser' : variant === 'kyc' ? 'kycRate' : 'conversionRate',
-      header: variant === 'quality' ? 'Fee / User' : variant === 'kyc' ? 'KYC Rate' : 'Conversion',
-      cell: ({ row }: any) =>
-        variant === 'quality'
-          ? formatUsd(row.original.feePerUser)
-          : variant === 'kyc'
-            ? formatPercent(row.original.kycRate)
-            : formatPercent(row.original.conversionRate),
-    },
-    {
-      accessorKey:
-        variant === 'quality'
-          ? 'retention30d'
-          : variant === 'kyc'
-            ? 'conversionRate'
-            : 'timeToFirstTxMedianDays',
-      header:
-        variant === 'quality'
-          ? 'Retention 30d'
-          : variant === 'kyc'
-            ? 'Conversion'
-            : 'Median time to first tx',
-      cell: ({ row }: any) =>
-        variant === 'quality'
-          ? formatPercent(row.original.retention30d)
-          : variant === 'kyc'
-            ? formatPercent(row.original.conversionRate)
-            : `${row.original.timeToFirstTxMedianDays.toFixed(1)}d`,
-    },
-  ]
+  const leaderboardColumns = (variant: 'revenue' | 'quality' | 'conversion' | 'kyc') => {
+    const columns = [
+      {
+        accessorKey: 'code',
+        header: 'Referral',
+        cell: ({ row }: any) => (
+          <Link className="font-semibold text-primary" to={`/referral-detail/${row.original.code}`}>
+            {row.original.code}
+          </Link>
+        ),
+      },
+      {
+        accessorKey: 'signups',
+        header: 'Signups',
+        cell: ({ row }: any) => formatNumber(row.original.signups),
+      },
+      {
+        accessorKey: 'usersWithRevenueTx',
+        header: 'Users w/ Revenue',
+        cell: ({ row }: any) => formatNumber(row.original.usersWithRevenueTx),
+      },
+      {
+        accessorKey: variant === 'kyc' ? 'kycUsers' : 'feeUsd',
+        header: variant === 'kyc' ? 'KYC Users' : 'Fee USD',
+        cell: ({ row }: any) =>
+          variant === 'kyc' ? formatNumber(row.original.kycUsers) : formatUsd(row.original.feeUsd),
+      },
+      {
+        id: 'arpu30d',
+        accessorFn: (row: ReferralMetrics) => arpuByCode[row.code]?.feePerUser ?? 0,
+        header: 'ARPU 30d',
+        cell: ({ row }: any) => formatUsd(arpuByCode[row.original.code]?.feePerUser ?? 0),
+      },
+      {
+        accessorKey: variant === 'quality' ? 'feePerUser' : variant === 'kyc' ? 'kycRate' : 'conversionRate',
+        header: variant === 'quality' ? 'Fee / User' : variant === 'kyc' ? 'KYC Rate' : 'Conversion',
+        cell: ({ row }: any) =>
+          variant === 'quality'
+            ? formatUsd(row.original.feePerUser)
+            : variant === 'kyc'
+              ? formatPercent(row.original.kycRate)
+              : formatPercent(row.original.conversionRate),
+      },
+      {
+        accessorKey:
+          variant === 'quality'
+            ? 'retention30d'
+            : variant === 'kyc'
+              ? 'conversionRate'
+              : 'timeToFirstTxMedianDays',
+        header:
+          variant === 'quality'
+            ? 'Retention 30d'
+            : variant === 'kyc'
+              ? 'Conversion'
+              : 'Median time to first tx',
+        cell: ({ row }: any) =>
+          variant === 'quality'
+            ? formatPercent(row.original.retention30d)
+            : variant === 'kyc'
+              ? formatPercent(row.original.conversionRate)
+              : `${row.original.timeToFirstTxMedianDays.toFixed(1)}d`,
+      },
+    ]
+
+    if (variant === 'revenue') {
+      columns.splice(4, 0, {
+        id: 'estimatedFee',
+        header: 'Estimated fee',
+        accessorFn: (row: ReferralMetrics) => {
+          const arpu = arpuByCode[row.code]?.feePerUser ?? 0
+          return row.signups * row.kycRate * arpu
+        },
+        cell: ({ row }: any) => {
+          const arpu = arpuByCode[row.original.code]?.feePerUser ?? 0
+          return formatUsd(row.original.signups * row.original.kycRate * arpu)
+        },
+      })
+      columns.splice(6, 0, {
+        id: 'kycRate',
+        header: 'KYC rate',
+        accessorFn: (row: ReferralMetrics) => row.kycRate,
+        cell: ({ row }: any) => formatPercent(row.original.kycRate),
+      })
+    }
+
+    return columns
+  }
 
   const getSorted = (variant: 'revenue' | 'quality' | 'conversion' | 'kyc') => {
     const rows = referralCodes.map((code) => metricsByCode[code])
