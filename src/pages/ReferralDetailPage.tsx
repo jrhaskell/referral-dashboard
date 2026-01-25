@@ -29,8 +29,11 @@ import {
   getDailySeries,
   getRangeBounds,
   getReferralMetrics,
-  type UserAgg,
+  type AnalyticsIndex,
+  type Customer,
   type DateRange,
+  type ReferralIndex,
+  type UserAgg,
 } from '@/lib/analytics'
 import { buildDailyStackedSeries } from '@/lib/analytics/buildDailySeries'
 import { useAnalytics } from '@/lib/analytics/context'
@@ -68,6 +71,61 @@ export function ReferralDetailPage() {
   const metrics = getReferralMetrics(index, code, dateRange)
   const dailySeries = getDailySeries(index, code, dateRange)
   const users = Array.from(referral.users.values())
+
+  const propagationMap = React.useMemo(() => buildPropagationMap(index), [index])
+  const descendantCache = React.useMemo(() => {
+    const cache = new Map<string, DescendantStats>()
+    index.referralCodes.forEach((meta) => {
+      buildDescendantStats(meta.code, propagationMap, cache)
+    })
+    buildDescendantStats(code, propagationMap, cache)
+    return cache
+  }, [index, propagationMap, code])
+
+  const propagationStats = React.useMemo(() => {
+    const stats = descendantCache.get(code) ?? { total: 0, maxDepth: 0 }
+    const totalSignups = sumSignups(referral)
+    const propagationRate = totalSignups ? stats.total / totalSignups : 0
+    return {
+      directChildren: propagationMap.get(code)?.length ?? 0,
+      totalDescendants: stats.total,
+      maxDepth: stats.maxDepth,
+      propagationRate,
+    }
+  }, [code, descendantCache, propagationMap, referral])
+
+  const avgPropagationRate = React.useMemo(
+    () => buildAveragePropagationRate(index, descendantCache),
+    [index, descendantCache],
+  )
+
+  const propagationGraph = React.useMemo(
+    () => buildPropagationGraph(code, propagationMap, index),
+    [code, propagationMap, index],
+  )
+
+  const propagationRanking = React.useMemo(() => {
+    const entries = Array.from(index.referralCodes.values()).map((meta) => {
+      const stats = descendantCache.get(meta.code) ?? { total: 0, maxDepth: 0 }
+      return { code: meta.code, total: stats.total, maxDepth: stats.maxDepth }
+    })
+
+    if (!entries.find((entry) => entry.code === code)) {
+      const stats = descendantCache.get(code) ?? { total: 0, maxDepth: 0 }
+      entries.push({ code, total: stats.total, maxDepth: stats.maxDepth })
+    }
+
+    entries.sort((a, b) => b.maxDepth - a.maxDepth || b.total - a.total)
+    const rankIndex = entries.findIndex((entry) => entry.code === code)
+
+    return {
+      leaders: entries.slice(0, 5),
+      rank: rankIndex >= 0 ? rankIndex + 1 : null,
+      total: entries.length,
+    }
+  }, [index, descendantCache, code])
+
+  const hasPropagationGraph = propagationGraph.edges.length > 0
 
   const summary = {
     signups: metrics.signups,
@@ -213,6 +271,25 @@ export function ReferralDetailPage() {
         <KpiCard title="Retention 30d" value={formatPercent(metrics.retention30d)} />
       </div>
 
+      <div className="grid gap-4 md:grid-cols-4">
+        <KpiCard
+          title="Propagation rate"
+          value={formatPercent(propagationStats.propagationRate)}
+          helper={`Avg ${formatPercent(avgPropagationRate)}`}
+        />
+        <KpiCard title="Direct referral codes" value={formatNumber(propagationStats.directChildren)} />
+        <KpiCard title="Total descendant codes" value={formatNumber(propagationStats.totalDescendants)} />
+        <KpiCard
+          title="Propagation depth"
+          value={formatNumber(propagationStats.maxDepth)}
+          helper={
+            propagationRanking.rank
+              ? `Rank ${propagationRanking.rank}/${propagationRanking.total}`
+              : 'Rank —'
+          }
+        />
+      </div>
+
       <GroupSummaryCard
         title="Referral summary"
         summary={summary}
@@ -220,6 +297,49 @@ export function ReferralDetailPage() {
         showConcentration={false}
         showFlags={false}
       />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Nodes & relationships</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Shows referral codes created by users invited from {code}. Drag nodes to rearrange. Depth limited to 3 levels.
+          </p>
+          {hasPropagationGraph ? (
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <PropagationGraph graph={propagationGraph} />
+              <div className="space-y-2 rounded-md border bg-muted/30 p-3 text-xs">
+                <p className="font-medium text-muted-foreground">Longest relationships</p>
+                {propagationRanking.leaders.length ? (
+                  <ol className="space-y-2">
+                    {propagationRanking.leaders.map((leader, index) => (
+                      <li key={leader.code} className="flex items-center justify-between gap-2">
+                        <span
+                          className={
+                            leader.code === code
+                              ? 'truncate font-semibold text-primary'
+                              : 'truncate text-foreground'
+                          }
+                        >
+                          {index + 1}. {leader.code}
+                        </span>
+                        <span className="text-muted-foreground">
+                          Depth {leader.maxDepth} · {formatNumber(leader.total)}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No propagation chains yet.</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No downstream referral codes created yet.</p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -531,6 +651,523 @@ export function ReferralDetailPage() {
       <DebugPanel index={index} />
     </div>
   )
+}
+
+type PropagationChild = {
+  code: string
+  creatorId: string
+  creatorLabel: string
+}
+
+type PropagationMap = Map<string, PropagationChild[]>
+
+type DescendantStats = {
+  total: number
+  maxDepth: number
+}
+
+type GraphNode = {
+  id: string
+  label: string
+  type: 'referral' | 'user'
+  level: number
+  x: number
+  y: number
+  value?: number
+}
+
+type GraphEdge = {
+  id: string
+  from: string
+  to: string
+}
+
+type GraphLayout = {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  width: number
+  height: number
+}
+
+type NodePosition = {
+  x: number
+  y: number
+}
+
+const GRAPH_NODE_SIZE = 104
+const GRAPH_NODE_WIDTH = GRAPH_NODE_SIZE
+const GRAPH_NODE_HEIGHT = GRAPH_NODE_SIZE
+const GRAPH_COL_GAP = 70
+const GRAPH_ROW_GAP = 36
+const GRAPH_MAX_DEPTH = 3
+const GRAPH_MAX_CHILDREN = 6
+const GRAPH_MAX_NODES = 60
+const GRAPH_SPRING_DISTANCE = GRAPH_NODE_SIZE + GRAPH_COL_GAP
+const GRAPH_SPRING_STRENGTH = 0.12
+const GRAPH_DRAG_FOLLOW = 0.35
+const GRAPH_DRAG_SECONDARY_FOLLOW = 0.18
+const GRAPH_COLLISION_DISTANCE = GRAPH_NODE_SIZE * 1.05
+const GRAPH_COLLISION_STRENGTH = 0.65
+const GRAPH_REPULSION_DISTANCE = GRAPH_NODE_SIZE * 1.6
+const GRAPH_REPULSION_STRENGTH = 0.2
+
+function PropagationGraph({ graph }: { graph: GraphLayout }) {
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  const settleRef = React.useRef<number | null>(null)
+  const adjacency = React.useMemo(() => {
+    const map = new Map<string, string[]>()
+    graph.edges.forEach((edge) => {
+      map.set(edge.from, [...(map.get(edge.from) ?? []), edge.to])
+      map.set(edge.to, [...(map.get(edge.to) ?? []), edge.from])
+    })
+    return map
+  }, [graph.edges])
+  const nodeTypes = React.useMemo(
+    () => new Map(graph.nodes.map((node) => [node.id, node.type])),
+    [graph.nodes],
+  )
+
+  const [positions, setPositions] = React.useState(() =>
+    new Map(graph.nodes.map((node) => [node.id, { x: node.x, y: node.y }])),
+  )
+  const [dragState, setDragState] = React.useState<{
+    id: string
+    offsetX: number
+    offsetY: number
+  } | null>(null)
+
+  React.useEffect(() => {
+    if (settleRef.current) {
+      cancelAnimationFrame(settleRef.current)
+      settleRef.current = null
+    }
+    setPositions(new Map(graph.nodes.map((node) => [node.id, { x: node.x, y: node.y }])))
+  }, [graph.nodes])
+
+  const applyEdgeSpring = React.useCallback(
+    (next: Map<string, NodePosition>, fixedId?: string) => {
+      graph.edges.forEach((edge) => {
+        const from = next.get(edge.from)
+        const to = next.get(edge.to)
+        if (!from || !to) return
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const distance = Math.max(1, Math.hypot(dx, dy))
+        const diff = distance - GRAPH_SPRING_DISTANCE
+        const adjust = diff * GRAPH_SPRING_STRENGTH
+        const shiftX = (dx / distance) * adjust
+        const shiftY = (dy / distance) * adjust
+
+        const fromFixed = fixedId && edge.from === fixedId
+        const toFixed = fixedId && edge.to === fixedId
+
+        if (!fromFixed) {
+          next.set(edge.from, {
+            x: Math.max(0, from.x + shiftX),
+            y: Math.max(0, from.y + shiftY),
+          })
+        }
+        if (!toFixed) {
+          next.set(edge.to, {
+            x: Math.max(0, to.x - shiftX),
+            y: Math.max(0, to.y - shiftY),
+          })
+        }
+      })
+    },
+    [graph.edges],
+  )
+
+  const applyRepulsion = React.useCallback(
+    (next: Map<string, NodePosition>, fixedId?: string) => {
+      const entries = Array.from(next.entries())
+      for (let i = 0; i < entries.length; i += 1) {
+        const [idA] = entries[i]
+        for (let j = i + 1; j < entries.length; j += 1) {
+          const [idB] = entries[j]
+          const typeA = nodeTypes.get(idA)
+          const typeB = nodeTypes.get(idB)
+          if (!typeA || !typeB || typeA !== typeB) continue
+
+          const posA = next.get(idA)
+          const posB = next.get(idB)
+          if (!posA || !posB) continue
+          const dx = posB.x - posA.x
+          const dy = posB.y - posA.y
+          const distance = Math.max(1, Math.hypot(dx, dy))
+
+          if (distance >= GRAPH_REPULSION_DISTANCE) continue
+
+          const isCollision = distance < GRAPH_COLLISION_DISTANCE
+          const targetDistance = isCollision ? GRAPH_COLLISION_DISTANCE : GRAPH_REPULSION_DISTANCE
+          const overlap = targetDistance - distance
+          const strength = isCollision ? GRAPH_COLLISION_STRENGTH : GRAPH_REPULSION_STRENGTH
+          const push = (overlap / distance) * strength
+          const pushX = (dx / distance) * push
+          const pushY = (dy / distance) * push
+
+          const aFixed = fixedId && idA === fixedId
+          const bFixed = fixedId && idB === fixedId
+
+          if (!aFixed) {
+            const factor = bFixed ? 1 : 0.5
+            next.set(idA, {
+              x: Math.max(0, posA.x - pushX * factor),
+              y: Math.max(0, posA.y - pushY * factor),
+            })
+          }
+          if (!bFixed) {
+            const factor = aFixed ? 1 : 0.5
+            next.set(idB, {
+              x: Math.max(0, posB.x + pushX * factor),
+              y: Math.max(0, posB.y + pushY * factor),
+            })
+          }
+        }
+      }
+    },
+    [nodeTypes],
+  )
+
+  React.useEffect(() => {
+    if (!dragState) return
+
+    const handleMove = (event: PointerEvent) => {
+      const container = containerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      const x = event.clientX - rect.left - dragState.offsetX
+      const y = event.clientY - rect.top - dragState.offsetY
+
+      setPositions((prev) => {
+        const next = new Map(prev)
+        const current = next.get(dragState.id)
+        if (!current) return prev
+
+        const newPos = { x: Math.max(0, x), y: Math.max(0, y) }
+        const deltaX = newPos.x - current.x
+        const deltaY = newPos.y - current.y
+        next.set(dragState.id, newPos)
+
+        const neighbors = adjacency.get(dragState.id) ?? []
+        neighbors.forEach((neighborId) => {
+          const neighbor = next.get(neighborId)
+          if (!neighbor) return
+          next.set(neighborId, {
+            x: Math.max(0, neighbor.x + deltaX * GRAPH_DRAG_FOLLOW),
+            y: Math.max(0, neighbor.y + deltaY * GRAPH_DRAG_FOLLOW),
+          })
+        })
+
+        const secondary = new Set<string>()
+        neighbors.forEach((neighborId) => {
+          ;(adjacency.get(neighborId) ?? []).forEach((childId) => {
+            if (childId !== dragState.id && !neighbors.includes(childId)) {
+              secondary.add(childId)
+            }
+          })
+        })
+        secondary.forEach((childId) => {
+          const child = next.get(childId)
+          if (!child) return
+          next.set(childId, {
+            x: Math.max(0, child.x + deltaX * GRAPH_DRAG_SECONDARY_FOLLOW),
+            y: Math.max(0, child.y + deltaY * GRAPH_DRAG_SECONDARY_FOLLOW),
+          })
+        })
+
+        applyEdgeSpring(next, dragState.id)
+        applyRepulsion(next, dragState.id)
+        return next
+      })
+    }
+
+    const handleUp = () => {
+      setDragState(null)
+      if (settleRef.current) {
+        cancelAnimationFrame(settleRef.current)
+        settleRef.current = null
+      }
+      let frames = 14
+      const settle = () => {
+        frames -= 1
+        setPositions((prev) => {
+          const next = new Map(prev)
+          applyEdgeSpring(next)
+          applyRepulsion(next)
+          return next
+        })
+        if (frames > 0) {
+          settleRef.current = requestAnimationFrame(settle)
+        } else {
+          settleRef.current = null
+        }
+      }
+      settleRef.current = requestAnimationFrame(settle)
+    }
+
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', handleUp)
+    return () => {
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', handleUp)
+    }
+  }, [dragState, adjacency, applyEdgeSpring, applyRepulsion])
+
+  const bounds = React.useMemo(() => {
+    let maxX = 0
+    let maxY = 0
+    positions.forEach((pos) => {
+      maxX = Math.max(maxX, pos.x)
+      maxY = Math.max(maxY, pos.y)
+    })
+    return {
+      width: Math.max(graph.width, maxX + GRAPH_NODE_WIDTH + GRAPH_COL_GAP),
+      height: Math.max(graph.height, maxY + GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP),
+    }
+  }, [positions, graph.width, graph.height])
+
+  const width = Math.max(640, bounds.width)
+  const height = Math.max(220, bounds.height)
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>, nodeId: string) => {
+    event.preventDefault()
+    if (settleRef.current) {
+      cancelAnimationFrame(settleRef.current)
+      settleRef.current = null
+    }
+    const container = containerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const position = positions.get(nodeId)
+    if (!position) return
+    setDragState({
+      id: nodeId,
+      offsetX: event.clientX - rect.left - position.x,
+      offsetY: event.clientY - rect.top - position.y,
+    })
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <div
+        ref={containerRef}
+        className="relative"
+        style={{ width, height, minHeight: 220, touchAction: 'none' }}
+      >
+        <svg className="absolute inset-0" width={width} height={height}>
+          {graph.edges.map((edge) => {
+            const from = positions.get(edge.from)
+            const to = positions.get(edge.to)
+            if (!from || !to) return null
+            const startX = from.x + GRAPH_NODE_WIDTH / 2
+            const startY = from.y + GRAPH_NODE_HEIGHT / 2
+            const endX = to.x + GRAPH_NODE_WIDTH / 2
+            const endY = to.y + GRAPH_NODE_HEIGHT / 2
+            return (
+              <path
+                key={edge.id}
+                d={`M ${startX} ${startY} L ${endX} ${endY}`}
+                stroke="#94a3b8"
+                strokeWidth="1.2"
+                fill="none"
+              />
+            )
+          })}
+        </svg>
+        {graph.nodes.map((node) => {
+          const isReferral = node.type === 'referral'
+          const position = positions.get(node.id) ?? { x: node.x, y: node.y }
+          return (
+            <div
+              key={node.id}
+              title={node.label}
+              onPointerDown={(event) => handlePointerDown(event, node.id)}
+              className={`absolute flex select-none flex-col items-center justify-center rounded-full border text-center text-xs shadow-sm transition-shadow ${
+                isReferral
+                  ? 'border-primary/30 bg-primary/10 text-primary'
+                  : 'border-muted-foreground/30 bg-muted/40 text-foreground'
+              } cursor-grab active:cursor-grabbing`}
+              style={{
+                left: position.x,
+                top: position.y,
+                width: GRAPH_NODE_WIDTH,
+                height: GRAPH_NODE_HEIGHT,
+              }}
+            >
+              <div className="w-full truncate px-2 text-[11px] font-semibold leading-tight">
+                {truncateLabel(node.label)}
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                {isReferral ? `Signups ${formatNumber(node.value ?? 0)}` : 'Creator'}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function buildPropagationMap(index: AnalyticsIndex): PropagationMap {
+  const map = new Map<string, PropagationChild[]>()
+  index.referralCodes.forEach((meta) => {
+    if (!meta.createdBy) return
+    const creator = index.customersById.get(meta.createdBy)
+    if (!creator) return
+    const parentCode = creator.referral.trim()
+    if (!parentCode) return
+    const entry: PropagationChild = {
+      code: meta.code,
+      creatorId: meta.createdBy,
+      creatorLabel: formatCreatorLabel(creator, meta.createdBy),
+    }
+    const next = map.get(parentCode) ?? []
+    next.push(entry)
+    map.set(parentCode, next)
+  })
+  return map
+}
+
+function buildDescendantStats(
+  code: string,
+  map: PropagationMap,
+  cache: Map<string, DescendantStats>,
+  stack: Set<string> = new Set(),
+): DescendantStats {
+  const cached = cache.get(code)
+  if (cached) return cached
+  if (stack.has(code)) {
+    return { total: 0, maxDepth: 0 }
+  }
+
+  stack.add(code)
+  const children = map.get(code) ?? []
+  let total = 0
+  let maxDepth = 0
+  children.forEach((child) => {
+    if (stack.has(child.code)) return
+    const childStats = buildDescendantStats(child.code, map, cache, stack)
+    total += 1 + childStats.total
+    maxDepth = Math.max(maxDepth, 1 + childStats.maxDepth)
+  })
+  stack.delete(code)
+
+  const stats = { total, maxDepth }
+  cache.set(code, stats)
+  return stats
+}
+
+function sumSignups(referral: ReferralIndex) {
+  let total = 0
+  referral.signupsByDate.forEach((value) => {
+    total += value
+  })
+  return total
+}
+
+function buildAveragePropagationRate(index: AnalyticsIndex, cache: Map<string, DescendantStats>) {
+  let totalDescendants = 0
+  let totalSignups = 0
+
+  index.referralCodes.forEach((meta) => {
+    const referral = index.referrals.get(meta.code)
+    if (!referral) return
+    const signups = sumSignups(referral)
+    if (!signups) return
+    totalSignups += signups
+    totalDescendants += cache.get(meta.code)?.total ?? 0
+  })
+
+  return totalSignups ? totalDescendants / totalSignups : 0
+}
+
+function buildPropagationGraph(
+  rootCode: string,
+  map: PropagationMap,
+  index: AnalyticsIndex,
+): GraphLayout {
+  const nodes: GraphNode[] = []
+  const edges: GraphEdge[] = []
+  const nodeById = new Map<string, GraphNode>()
+  const levelCounts = new Map<number, number>()
+
+  const addNode = (id: string, label: string, type: GraphNode['type'], level: number, value?: number) => {
+    if (nodeById.has(id)) return
+    const levelIndex = levelCounts.get(level) ?? 0
+    const x = level * (GRAPH_NODE_WIDTH + GRAPH_COL_GAP)
+    const y = levelIndex * (GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP)
+    const node: GraphNode = { id, label, type, level, x, y, value }
+    nodeById.set(id, node)
+    nodes.push(node)
+    levelCounts.set(level, levelIndex + 1)
+  }
+
+  const rootReferral = index.referrals.get(rootCode)
+  const rootId = `ref:${rootCode}`
+  addNode(rootId, rootCode, 'referral', 0, rootReferral ? sumSignups(rootReferral) : 0)
+
+  const queue: Array<{ code: string; depth: number }> = [{ code: rootCode, depth: 0 }]
+  const visited = new Set<string>([rootCode])
+
+  while (queue.length && nodes.length < GRAPH_MAX_NODES) {
+    const current = queue.shift()
+    if (!current || current.depth >= GRAPH_MAX_DEPTH) continue
+    const children = map.get(current.code) ?? []
+    if (!children.length) continue
+
+    const sortedChildren = children
+      .slice()
+      .sort((a, b) => {
+        const aReferral = index.referrals.get(a.code)
+        const bReferral = index.referrals.get(b.code)
+        const aSignups = aReferral ? sumSignups(aReferral) : 0
+        const bSignups = bReferral ? sumSignups(bReferral) : 0
+        return bSignups - aSignups
+      })
+      .slice(0, GRAPH_MAX_CHILDREN)
+
+    sortedChildren.forEach((child) => {
+      if (nodes.length >= GRAPH_MAX_NODES) return
+      const referralLevel = current.depth * 2
+      const userLevel = referralLevel + 1
+      const childLevel = referralLevel + 2
+
+      const parentId = `ref:${current.code}`
+      const userId = `user:${child.creatorId}`
+      const childId = `ref:${child.code}`
+
+      addNode(userId, child.creatorLabel || child.creatorId, 'user', userLevel)
+      const childReferral = index.referrals.get(child.code)
+      addNode(childId, child.code, 'referral', childLevel, childReferral ? sumSignups(childReferral) : 0)
+
+      edges.push({ id: `${parentId}-${userId}`, from: parentId, to: userId })
+      edges.push({ id: `${userId}-${childId}`, from: userId, to: childId })
+
+      if (!visited.has(child.code)) {
+        visited.add(child.code)
+        queue.push({ code: child.code, depth: current.depth + 1 })
+      }
+    })
+  }
+
+  const maxX = nodes.reduce((max, node) => Math.max(max, node.x), 0)
+  const maxY = nodes.reduce((max, node) => Math.max(max, node.y), 0)
+  const width = maxX + GRAPH_NODE_WIDTH + GRAPH_COL_GAP
+  const height = maxY + GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP
+
+  return { nodes, edges, width, height }
+}
+
+function formatCreatorLabel(creator: Customer | undefined, fallback: string) {
+  if (creator?.email) return creator.email
+  if (creator?.id) return creator.id
+  return fallback
+}
+
+function truncateLabel(value: string, max = 18) {
+  if (value.length <= max) return value
+  return `${value.slice(0, max - 1)}…`
 }
 
 function buildTopUsersColumns() {

@@ -69,6 +69,19 @@ export type ReferralIndex = {
   revenueTxCount: number
 }
 
+export type ReferralCodeMeta = {
+  code: string
+  note: string
+  uses: number
+  maxUses: number | null
+  isActive: boolean
+  validFrom?: number
+  validUntil?: number
+  isExhausted: boolean
+  createdAt?: number
+  createdBy?: string
+}
+
 export type AnalyticsOptions = {
   keepFullTx: boolean
   maxStoredTxs: number
@@ -79,6 +92,7 @@ export type AnalyticsIndex = {
   customersById: Map<string, Customer>
   usersByWallet: Map<string, UserAgg>
   referrals: Map<string, ReferralIndex>
+  referralCodes: Map<string, ReferralCodeMeta>
   global: ReferralIndex
   totals: {
     customers: number
@@ -91,6 +105,7 @@ export type AnalyticsIndex = {
   metadata?: {
     customersFile?: FileMeta
     txFile?: FileMeta
+    referralCodesFile?: FileMeta
     generatedAt: number
   }
 }
@@ -117,6 +132,7 @@ export type AnalyticsSnapshot = {
   customers: Customer[]
   global: SerializedReferral
   referrals: SerializedReferral[]
+  referralCodes?: ReferralCodeMeta[]
 }
 
 export type SerializedReferral = {
@@ -169,6 +185,7 @@ export function createAnalyticsIndex(options: AnalyticsOptions): AnalyticsIndex 
     customersById: new Map(),
     usersByWallet: new Map(),
     referrals: new Map(),
+    referralCodes: new Map(),
     global: createReferralIndex('all'),
     totals: {
       customers: 0,
@@ -244,6 +261,12 @@ export function addCustomer(index: AnalyticsIndex, customer: Customer) {
     }
   }
   index.totals.customers += 1
+}
+
+export function addReferralCodeMeta(index: AnalyticsIndex, meta: ReferralCodeMeta) {
+  const code = meta.code.trim()
+  if (!code) return
+  index.referralCodes.set(code, { ...meta, code })
 }
 
 export type ParsedRevenueTx = {
@@ -454,6 +477,7 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
       volumeUsdTotal: referral.volumeUsdTotal,
       revenueTxCount: referral.revenueTxCount,
     })),
+    referralCodes: Array.from(index.referralCodes.values()),
   }
 }
 
@@ -494,6 +518,10 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
     created.revenueTxCount = referral.revenueTxCount
     index.referrals.set(referral.code, created)
   })
+
+  if (snapshot.referralCodes) {
+    index.referralCodes = new Map(snapshot.referralCodes.map((meta) => [meta.code, meta]))
+  }
   index.metadata = snapshot.metadata
   index.totals = snapshot.totals
   return index

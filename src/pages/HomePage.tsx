@@ -146,7 +146,7 @@ export function HomePage() {
       accessorKey: 'code',
       header: 'Referral',
       cell: ({ row }: any) => (
-        <Link className="font-semibold text-primary" to={`/referrals/${row.original.code}`}>
+        <Link className="font-semibold text-primary" to={`/referral-detail/${row.original.code}`}>
           {row.original.code}
         </Link>
       ),

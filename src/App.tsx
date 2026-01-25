@@ -7,6 +7,7 @@ import { HomePage } from '@/pages/HomePage'
 import { ReferralDetailPage } from '@/pages/ReferralDetailPage'
 import { WalletLookupPage } from '@/pages/WalletLookupPage'
 import { GroupsPage } from '@/pages/GroupsPage'
+import { ReferralCodesPage } from '@/pages/ReferralCodesPage'
 
 function RequireIndex({ children }: { children: React.ReactNode }) {
   const { index } = useAnalytics()
@@ -62,6 +63,14 @@ function App() {
               Group analysis
             </NavLink>
             <NavLink
+              to="/referral"
+              className={({ isActive }) =>
+                isActive ? 'font-semibold text-primary' : 'text-muted-foreground'
+              }
+            >
+              Referral codes
+            </NavLink>
+            <NavLink
               to="/lookup"
               className={({ isActive }) =>
                 isActive ? 'font-semibold text-primary' : 'text-muted-foreground'
@@ -84,7 +93,7 @@ function App() {
             }
           />
           <Route
-            path="/referrals/:code"
+            path="/referral-detail/:code"
             element={
               <RequireIndex>
                 <ReferralDetailPage />
@@ -96,6 +105,14 @@ function App() {
             element={
               <RequireIndex>
                 <GroupsPage />
+              </RequireIndex>
+            }
+          />
+          <Route
+            path="/referral"
+            element={
+              <RequireIndex>
+                <ReferralCodesPage />
               </RequireIndex>
             }
           />

@@ -3,7 +3,7 @@ import type { AnalyticsSnapshot, FileMeta } from '@/lib/analytics'
 const DB_NAME = 'referral-analytics'
 const STORE_NAME = 'snapshots'
 const DB_VERSION = 1
-const CACHE_VERSION = 'v2-exclude-uxlink'
+const CACHE_VERSION = 'v3-referral-codes'
 
 function openDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -19,8 +19,8 @@ function openDb() {
   })
 }
 
-export function buildCacheKey(customers: FileMeta, txs: FileMeta) {
-  return `${CACHE_VERSION}__${customers.name}:${customers.size}:${customers.lastModified}__${txs.name}:${txs.size}:${txs.lastModified}`
+export function buildCacheKey(customers: FileMeta, txs: FileMeta, referralCodes: FileMeta) {
+  return `${CACHE_VERSION}__${customers.name}:${customers.size}:${customers.lastModified}__${txs.name}:${txs.size}:${txs.lastModified}__${referralCodes.name}:${referralCodes.size}:${referralCodes.lastModified}`
 }
 
 export async function getSnapshot(key: string): Promise<AnalyticsSnapshot | null> {

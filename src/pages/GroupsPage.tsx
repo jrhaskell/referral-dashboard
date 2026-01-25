@@ -289,7 +289,7 @@ export function GroupsPage() {
         row.original.isTotal ? (
           <span className="font-semibold">{row.original.code}</span>
         ) : (
-          <Link className="font-semibold text-primary" to={`/referrals/${row.original.code}`}>
+          <Link className="font-semibold text-primary" to={`/referral-detail/${row.original.code}`}>
             {row.original.code}
           </Link>
         ),
