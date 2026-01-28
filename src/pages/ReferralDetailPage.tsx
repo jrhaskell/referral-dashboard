@@ -249,7 +249,8 @@ export function ReferralDetailPage() {
         ]),
       )
       .join('\n')
-    downloadFile(`referral-${code}-users.csv`, `${header}\n${body}`, 'text/csv')
+    const filename = `referral-${code}-users-${format(new Date(), 'yyyy-MM-dd')}.csv`
+    downloadFile(filename, `${header}\n${body}`, 'text/csv')
   }
 
   return (

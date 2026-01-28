@@ -133,12 +133,14 @@ export function HomePage() {
         ]),
       )
       .join('\n')
-    downloadFile('leaderboard.csv', `${header}\n${body}`, 'text/csv')
+    const filename = `leaderboard-${format(new Date(), 'yyyy-MM-dd')}.csv`
+    downloadFile(filename, `${header}\n${body}`, 'text/csv')
   }
 
   const exportSnapshot = () => {
     const snapshot = serializeIndex(index)
-    downloadFile('referral-snapshot.json', JSON.stringify(snapshot, null, 2), 'application/json')
+    const filename = `referral-snapshot-${format(new Date(), 'yyyy-MM-dd')}.json`
+    downloadFile(filename, JSON.stringify(snapshot, null, 2), 'application/json')
   }
 
   const leaderboardColumns = (variant: 'revenue' | 'quality' | 'conversion' | 'kyc') => {

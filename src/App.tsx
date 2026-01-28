@@ -6,6 +6,7 @@ import { ImportPage } from '@/pages/ImportPage'
 import { HomePage } from '@/pages/HomePage'
 import { ReferralDetailPage } from '@/pages/ReferralDetailPage'
 import { WalletLookupPage } from '@/pages/WalletLookupPage'
+import { ClientsPage } from '@/pages/ClientsPage'
 import { GroupsPage } from '@/pages/GroupsPage'
 import { ReferralCodesPage } from '@/pages/ReferralCodesPage'
 
@@ -71,6 +72,14 @@ function App() {
               Referral codes
             </NavLink>
             <NavLink
+              to="/clients"
+              className={({ isActive }) =>
+                isActive ? 'font-semibold text-primary' : 'text-muted-foreground'
+              }
+            >
+              Clients
+            </NavLink>
+            <NavLink
               to="/lookup"
               className={({ isActive }) =>
                 isActive ? 'font-semibold text-primary' : 'text-muted-foreground'
@@ -113,6 +122,14 @@ function App() {
             element={
               <RequireIndex>
                 <ReferralCodesPage />
+              </RequireIndex>
+            }
+          />
+          <Route
+            path="/clients"
+            element={
+              <RequireIndex>
+                <ClientsPage />
               </RequireIndex>
             }
           />

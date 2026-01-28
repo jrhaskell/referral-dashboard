@@ -94,6 +94,7 @@ export type AnalyticsIndex = {
   referrals: Map<string, ReferralIndex>
   referralCodes: Map<string, ReferralCodeMeta>
   ownerUsageDaily: Map<string, Map<string, DailyAgg>>
+  customerUsageDaily: Map<string, Map<string, DailyAgg>>
   global: ReferralIndex
   totals: {
     customers: number
@@ -136,6 +137,10 @@ export type AnalyticsSnapshot = {
   referralCodes?: ReferralCodeMeta[]
   ownerUsageDaily?: Array<{
     ownerId: string
+    daily: Array<[string, DailyAgg]>
+  }>
+  customerUsageDaily?: Array<{
+    customerId: string
     daily: Array<[string, DailyAgg]>
   }>
 }
@@ -192,6 +197,7 @@ export function createAnalyticsIndex(options: AnalyticsOptions): AnalyticsIndex 
     referrals: new Map(),
     referralCodes: new Map(),
     ownerUsageDaily: new Map(),
+    customerUsageDaily: new Map(),
     global: createReferralIndex('all'),
     totals: {
       customers: 0,
@@ -222,6 +228,16 @@ function ensureDaily(referral: ReferralIndex, date: string) {
   if (existing) return existing
   const created = { date, feeUsd: 0, volumeUsd: 0, revenueTxCount: 0 }
   referral.daily.set(date, created)
+  return created
+}
+
+function ensureCustomerDaily(index: AnalyticsIndex, customerId: string, date: string) {
+  const map = index.customerUsageDaily.get(customerId) ?? new Map<string, DailyAgg>()
+  const existing = map.get(date)
+  if (existing) return existing
+  const created = { date, feeUsd: 0, volumeUsd: 0, revenueTxCount: 0 }
+  map.set(date, created)
+  index.customerUsageDaily.set(customerId, map)
   return created
 }
 
@@ -347,6 +363,11 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
   globalDaily.feeUsd += tx.feeUsd
   globalDaily.volumeUsd += tx.volumeUsd
   globalDaily.revenueTxCount += 1
+
+  const customerDaily = ensureCustomerDaily(index, customer.id, dateKey)
+  customerDaily.feeUsd += tx.feeUsd
+  customerDaily.volumeUsd += tx.volumeUsd
+  customerDaily.revenueTxCount += 1
 
   referral.feeUsdTotal += tx.feeUsd
   referral.volumeUsdTotal += tx.volumeUsd
@@ -513,6 +534,10 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
       ownerId,
       daily: Array.from(daily.entries()),
     })),
+    customerUsageDaily: Array.from(index.customerUsageDaily.entries()).map(([customerId, daily]) => ({
+      customerId,
+      daily: Array.from(daily.entries()),
+    })),
   }
 }
 
@@ -560,6 +585,11 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
   if (snapshot.ownerUsageDaily) {
     index.ownerUsageDaily = new Map(
       snapshot.ownerUsageDaily.map((entry) => [entry.ownerId, new Map(entry.daily)]),
+    )
+  }
+  if (snapshot.customerUsageDaily) {
+    index.customerUsageDaily = new Map(
+      snapshot.customerUsageDaily.map((entry) => [entry.customerId, new Map(entry.daily)]),
     )
   }
   index.metadata = snapshot.metadata
