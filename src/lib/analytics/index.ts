@@ -107,6 +107,7 @@ export type AnalyticsIndex = {
   metadata?: {
     customersFile?: FileMeta
     txFile?: FileMeta
+    txFiles?: FileMeta[]
     referralCodesFile?: FileMeta
     generatedAt: number
   }

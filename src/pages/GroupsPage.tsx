@@ -141,6 +141,11 @@ export function GroupsPage() {
     () => getGroupSummary(index, range, selectedCodes),
     [index, range, selectedCodes],
   )
+  const lifetimeRange = bounds ?? range
+  const lifetimeSummary = React.useMemo(
+    () => getGroupSummary(index, lifetimeRange, selectedCodes),
+    [index, lifetimeRange, selectedCodes],
+  )
 
   const adRange = normalizeRange(adStart, adEnd, range)
   const adSummary = React.useMemo(
@@ -221,16 +226,8 @@ export function GroupsPage() {
   const lifetimeMonths =
     Number.isFinite(lifetimeMonthsValue) && lifetimeMonthsValue > 0 ? lifetimeMonthsValue : 0
   const lifetimeArpu = arpuSummary.feePerUser * lifetimeMonths
-  const estimatorKycRate = React.useMemo(() => {
-    const totalSignups = selectedMetrics.reduce((sum, metric) => sum + metric.signups, 0)
-    if (!totalSignups) return 0
-    const weightedSum = selectedMetrics.reduce(
-      (sum, metric) => sum + metric.kycRate * metric.signups,
-      0,
-    )
-    return weightedSum / totalSignups
-  }, [selectedMetrics])
-  const estimatedActiveUsers = adSummary.signups * estimatorKycRate
+  const estimatorConversionRate = lifetimeSummary.conversionRate
+  const estimatedActiveUsers = adSummary.signups * estimatorConversionRate
   const estimatedFee = estimatedActiveUsers * lifetimeArpu
   const estimatedRoas = hasSpend && lifetimeMonths ? estimatedFee / adSpendValue : null
 
@@ -515,8 +512,8 @@ export function GroupsPage() {
 
               <div className="grid gap-4 md:grid-cols-4">
                 <div>
-                  <p className="text-xs text-muted-foreground">KYC rate</p>
-                  <p className="text-lg font-semibold">{formatPercent(estimatorKycRate)}</p>
+                  <p className="text-xs text-muted-foreground">Conversion rate</p>
+                  <p className="text-lg font-semibold">{formatPercent(estimatorConversionRate)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Estimated active users</p>
@@ -543,7 +540,7 @@ export function GroupsPage() {
                   <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
                     Clear spend
                   </Button>
-                  <span>Estimated fee = signups × KYC rate × ARPU(30d) × lifetime months</span>
+                  <span>Estimated fee = signups × conversion rate × ARPU(30d) × lifetime months</span>
                 </div>
               </div>
             </CardContent>

@@ -25,40 +25,197 @@ import { parseTransactionsNdjson } from '@/lib/parsers/ndjson'
 import { buildCacheKey, getSnapshot, saveSnapshot } from '@/lib/storage/indexeddb'
 import { formatNumber } from '@/lib/utils'
 
+type DataManifest = {
+  customersCsv?: string | null
+  referralCodesCsv?: string | null
+  ndjsonFiles?: string[] | null
+}
+
+const DATA_BASE_PATH = `${import.meta.env.BASE_URL}data/`
+
 export function ImportPage() {
   const navigate = useNavigate()
   const { setIndex } = useAnalytics()
 
   const [customersFile, setCustomersFile] = React.useState<File | null>(null)
-  const [txFile, setTxFile] = React.useState<File | null>(null)
+  const [txFiles, setTxFiles] = React.useState<File[]>([])
   const [referralCodesFile, setReferralCodesFile] = React.useState<File | null>(null)
   const [keepFullTx, setKeepFullTx] = React.useState(false)
   const [isBuilding, setIsBuilding] = React.useState(false)
+  const [isLoadingDataFolder, setIsLoadingDataFolder] = React.useState(false)
   const [csvReport, setCsvReport] = React.useState<CsvParseResult | null>(null)
   const [referralReport, setReferralReport] = React.useState<ReferralCodesParseResult | null>(null)
   const [errors, setErrors] = React.useState<string[]>([])
   const [status, setStatus] = React.useState<string | null>(null)
+  const [dataManifest, setDataManifest] = React.useState<DataManifest | null>(null)
+  const [dataFolderStatus, setDataFolderStatus] = React.useState<'loading' | 'ready' | 'empty' | 'error'>(
+    'loading',
+  )
+  const [dataFolderMessage, setDataFolderMessage] = React.useState<string | null>(null)
   const [csvProgress, setCsvProgress] = React.useState({ rows: 0, bytes: 0 })
   const [referralProgress, setReferralProgress] = React.useState({ rows: 0, bytes: 0 })
   const [ndjsonProgress, setNdjsonProgress] = React.useState({ lines: 0, bytes: 0, revenue: 0 })
 
   const reset = () => {
     setCustomersFile(null)
-    setTxFile(null)
+    setTxFiles([])
     setReferralCodesFile(null)
     setKeepFullTx(false)
     setCsvReport(null)
     setReferralReport(null)
     setErrors([])
     setStatus(null)
+    setDataFolderMessage(null)
     setCsvProgress({ rows: 0, bytes: 0 })
     setReferralProgress({ rows: 0, bytes: 0 })
     setNdjsonProgress({ lines: 0, bytes: 0, revenue: 0 })
     setIndex(null)
   }
 
+  const ndjsonTotalBytes = React.useMemo(
+    () => txFiles.reduce((total, file) => total + file.size, 0),
+    [txFiles],
+  )
+
+  const getFileLabel = React.useCallback((file: File) => {
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath
+    return relativePath || file.name
+  }, [])
+
+  const sortFiles = React.useCallback(
+    (files: File[]) => [...files].sort((a, b) => getFileLabel(a).localeCompare(getFileLabel(b))),
+    [getFileLabel],
+  )
+
+  const handleTxFiles = React.useCallback(
+    (files: File[]) => {
+      setTxFiles(sortFiles(files))
+      setNdjsonProgress({ lines: 0, bytes: 0, revenue: 0 })
+    },
+    [sortFiles],
+  )
+
+  const dataManifestSummary = React.useMemo(() => {
+    if (!dataManifest) return null
+    const summary: string[] = []
+    if (dataManifest.customersCsv) summary.push('Customers CSV')
+    if (dataManifest.referralCodesCsv) summary.push('Referral codes CSV')
+    if (dataManifest.ndjsonFiles?.length) {
+      summary.push(`${dataManifest.ndjsonFiles.length} NDJSON file${dataManifest.ndjsonFiles.length > 1 ? 's' : ''}`)
+    }
+    return summary.join(' · ')
+  }, [dataManifest])
+
+  React.useEffect(() => {
+    let isActive = true
+
+    const loadManifest = async () => {
+      setDataFolderStatus('loading')
+      setDataFolderMessage(null)
+      try {
+        const response = await fetch(`${DATA_BASE_PATH}manifest.json`, { cache: 'no-store' })
+        if (!response.ok) {
+          if (response.status === 404) {
+            if (isActive) setDataFolderStatus('empty')
+            return
+          }
+          throw new Error('manifest-unavailable')
+        }
+        const manifest = (await response.json()) as DataManifest
+        const normalized: DataManifest = {
+          customersCsv: manifest.customersCsv?.trim() || null,
+          referralCodesCsv: manifest.referralCodesCsv?.trim() || null,
+          ndjsonFiles: Array.isArray(manifest.ndjsonFiles)
+            ? manifest.ndjsonFiles.map((entry) => entry.trim()).filter(Boolean)
+            : [],
+        }
+        const hasData =
+          Boolean(normalized.customersCsv) ||
+          Boolean(normalized.referralCodesCsv) ||
+          Boolean(normalized.ndjsonFiles?.length)
+        if (!hasData) {
+          if (isActive) setDataFolderStatus('empty')
+          return
+        }
+        if (isActive) {
+          setDataManifest(normalized)
+          setDataFolderStatus('ready')
+        }
+      } catch (error) {
+        if (isActive) {
+          setDataFolderStatus('error')
+          setDataFolderMessage('Unable to read data/manifest.json.')
+        }
+      }
+    }
+
+    loadManifest()
+    return () => {
+      isActive = false
+    }
+  }, [])
+
+  const fetchManifestFile = async (path: string) => {
+    const trimmed = path.replace(/^\/+/, '')
+    const encoded = encodeURI(trimmed)
+    const response = await fetch(`${DATA_BASE_PATH}${encoded}`)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${trimmed}`)
+    }
+    const blob = await response.blob()
+    const lastModifiedHeader = response.headers.get('last-modified')
+    const lastModified = lastModifiedHeader ? new Date(lastModifiedHeader).getTime() : 0
+    return new File([blob], trimmed, { type: blob.type, lastModified })
+  }
+
+  const loadDataFolder = async () => {
+    if (!dataManifest) return
+    setIsLoadingDataFolder(true)
+    setErrors([])
+    setDataFolderMessage(null)
+    setStatus('Loading data folder…')
+    try {
+      const missing: string[] = []
+      const nextCustomersPath = dataManifest.customersCsv
+      const nextReferralPath = dataManifest.referralCodesCsv
+      const nextNdjsonPaths = dataManifest.ndjsonFiles ?? []
+
+      if (nextCustomersPath) {
+        setCustomersFile(await fetchManifestFile(nextCustomersPath))
+      } else {
+        missing.push('Customers CSV')
+      }
+
+      if (nextReferralPath) {
+        setReferralCodesFile(await fetchManifestFile(nextReferralPath))
+      } else {
+        missing.push('Referral codes CSV')
+      }
+
+      if (nextNdjsonPaths.length) {
+        const fetched: File[] = []
+        for (const path of nextNdjsonPaths) {
+          fetched.push(await fetchManifestFile(path))
+        }
+        handleTxFiles(fetched)
+      } else {
+        missing.push('NDJSON files')
+      }
+
+      if (missing.length) {
+        setDataFolderMessage(`Missing ${missing.join(', ')} in the manifest.`)
+      } else {
+        setStatus('Data folder files loaded.')
+      }
+    } catch (error) {
+      setDataFolderMessage('Failed to load files from the data folder.')
+    } finally {
+      setIsLoadingDataFolder(false)
+    }
+  }
+
   const buildDashboard = async () => {
-    if (!customersFile || !txFile || !referralCodesFile) return
+    if (!customersFile || !txFiles.length || !referralCodesFile) return
     setIsBuilding(true)
     setErrors([])
     setStatus('Checking cache…')
@@ -68,18 +225,18 @@ export function ImportPage() {
       size: customersFile.size,
       lastModified: customersFile.lastModified,
     }
-    const txMeta: FileMeta = {
-      name: txFile.name,
-      size: txFile.size,
-      lastModified: txFile.lastModified,
-    }
+    const txMetas: FileMeta[] = txFiles.map((file) => ({
+      name: getFileLabel(file),
+      size: file.size,
+      lastModified: file.lastModified,
+    }))
     const referralCodesMeta: FileMeta = {
       name: referralCodesFile.name,
       size: referralCodesFile.size,
       lastModified: referralCodesFile.lastModified,
     }
 
-    const cacheKey = buildCacheKey(customersMeta, txMeta, referralCodesMeta)
+    const cacheKey = buildCacheKey(customersMeta, txMetas, referralCodesMeta)
     try {
       const cached = await getSnapshot(cacheKey)
       if (cached) {
@@ -125,7 +282,8 @@ export function ImportPage() {
       const index = createAnalyticsIndex({ keepFullTx, maxStoredTxs: 500 })
       index.metadata = {
         customersFile: customersMeta,
-        txFile: txMeta,
+        txFile: txMetas.length === 1 ? txMetas[0] : undefined,
+        txFiles: txMetas,
         referralCodesFile: referralCodesMeta,
         generatedAt: Date.now(),
       }
@@ -142,24 +300,41 @@ export function ImportPage() {
       })
 
       setStatus('Streaming NDJSON transactions…')
-      const ndjsonResult = await parseTransactionsNdjson(
-        txFile,
-        (tx) => {
-          addRevenueTransaction(index, tx)
-          const ownerId = ownerWallets.get(tx.wallet)
-          if (ownerId) {
-            const dateKey = toDateKey(tx.createdAt)
-            addOwnerUsageDaily(index, ownerId, dateKey, tx.feeUsd, tx.volumeUsd)
-          }
-        },
-        (progress) => {
-          setNdjsonProgress({ lines: progress.lines, bytes: progress.bytes, revenue: progress.revenueTxCount })
-          index.totals.txLines = progress.lines
-        },
-      )
+      let ndjsonLines = 0
+      let ndjsonRevenue = 0
+      let ndjsonBytes = 0
+      const ndjsonErrors: string[] = []
 
-      index.totals.txLines = ndjsonResult.lines
-      setErrors((prev) => [...prev, ...referralResult.errors, ...csvResult.errors, ...ndjsonResult.errors])
+      for (const file of txFiles) {
+        const ndjsonResult = await parseTransactionsNdjson(
+          file,
+          (tx) => {
+            addRevenueTransaction(index, tx)
+            const ownerId = ownerWallets.get(tx.wallet)
+            if (ownerId) {
+              const dateKey = toDateKey(tx.createdAt)
+              addOwnerUsageDaily(index, ownerId, dateKey, tx.feeUsd, tx.volumeUsd)
+            }
+          },
+          (progress) => {
+            setNdjsonProgress({
+              lines: ndjsonLines + progress.lines,
+              bytes: ndjsonBytes + progress.bytes,
+              revenue: ndjsonRevenue + progress.revenueTxCount,
+            })
+            index.totals.txLines = ndjsonLines + progress.lines
+          },
+        )
+
+        ndjsonLines += ndjsonResult.lines
+        ndjsonRevenue += ndjsonResult.revenueTxCount
+        ndjsonBytes += file.size
+        ndjsonErrors.push(...ndjsonResult.errors)
+      }
+
+      index.totals.txLines = ndjsonLines
+      setNdjsonProgress({ lines: ndjsonLines, bytes: ndjsonBytes, revenue: ndjsonRevenue })
+      setErrors((prev) => [...prev, ...referralResult.errors, ...csvResult.errors, ...ndjsonErrors])
 
       const snapshot = serializeIndex(index)
       await saveSnapshot(cacheKey, snapshot)
@@ -180,7 +355,10 @@ export function ImportPage() {
   const referralProgressValue = referralCodesFile
     ? Math.min(100, (referralProgress.bytes / referralCodesFile.size) * 100)
     : 0
-  const ndjsonProgressValue = txFile ? Math.min(100, (ndjsonProgress.bytes / txFile.size) * 100) : 0
+  const ndjsonProgressValue =
+    txFiles.length && ndjsonTotalBytes
+      ? Math.min(100, (ndjsonProgress.bytes / ndjsonTotalBytes) * 100)
+      : 0
 
   return (
     <div className="space-y-6">
@@ -189,6 +367,47 @@ export function ImportPage() {
           <CardTitle>Import data files</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {dataFolderStatus === 'ready' ? (
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border bg-muted/40 p-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Data folder detected</p>
+                <p className="text-xs text-muted-foreground">
+                  {dataManifestSummary ?? 'Manifest loaded from public/data.'}
+                </p>
+                {dataFolderMessage ? (
+                  <p className="text-xs text-muted-foreground">{dataFolderMessage}</p>
+                ) : null}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={loadDataFolder}
+                disabled={isBuilding || isLoadingDataFolder}
+              >
+                {isLoadingDataFolder ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading
+                  </span>
+                ) : (
+                  'Load data folder'
+                )}
+              </Button>
+            </div>
+          ) : dataFolderStatus === 'empty' ? (
+            <div className="rounded-lg border bg-muted/40 p-4 text-xs text-muted-foreground">
+              <p className="text-sm font-medium text-foreground">Data folder is empty</p>
+              <p>Add files to public/data (NDJSON can live in monthly subfolders) or upload below.</p>
+            </div>
+          ) : dataFolderStatus === 'error' ? (
+            <div className="rounded-lg border bg-muted/40 p-4 text-xs text-muted-foreground">
+              <p className="text-sm font-medium text-foreground">Data folder unavailable</p>
+              <p>{dataFolderMessage ?? 'Upload files below or fix public/data/manifest.json.'}</p>
+            </div>
+          ) : (
+            <div className="rounded-lg border bg-muted/40 p-4 text-xs text-muted-foreground">
+              Checking data folder…
+            </div>
+          )}
           <div className="grid gap-4 md:grid-cols-3">
             <FileDropzone
               label="Clientes.csv"
@@ -199,11 +418,12 @@ export function ImportPage() {
               disabled={isBuilding}
             />
             <FileDropzone
-              label="txs-start-to-end.ndjson"
-              description="Drag & drop the NDJSON transactions."
+              label="NDJSON transactions"
+              description="Drag & drop one or more monthly NDJSON files."
               accept=".ndjson,.json"
-              file={txFile}
-              onFile={setTxFile}
+              files={txFiles}
+              onFiles={handleTxFiles}
+              multiple
               disabled={isBuilding}
             />
             <FileDropzone
@@ -225,7 +445,10 @@ export function ImportPage() {
             <Switch checked={keepFullTx} onCheckedChange={(value) => setKeepFullTx(Boolean(value))} />
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={buildDashboard} disabled={!customersFile || !txFile || !referralCodesFile || isBuilding}>
+            <Button
+              onClick={buildDashboard}
+              disabled={!customersFile || !txFiles.length || !referralCodesFile || isBuilding}
+            >
               {isBuilding ? (
                 <span className="flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin" />

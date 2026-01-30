@@ -40,6 +40,9 @@ export function GroupSummaryCard({
     { label: 'KYC users', value: formatNumber(summary.kycUsers) },
     { label: 'Total volume USD', value: formatUsd(summary.volumeUsd) },
     { label: 'Conversion rate', value: formatPercent(summary.conversionRate) },
+    ...(summary.avgLifetimeDays !== undefined
+      ? [{ label: 'Avg lifetime (days)', value: formatNumber(summary.avgLifetimeDays) }]
+      : []),
     { label: 'Fee per active user', value: formatUsd(summary.feePerUser) },
   ]
 
@@ -59,7 +62,9 @@ export function GroupSummaryCard({
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-4 text-sm md:grid-cols-4">
+        <div
+          className={`grid gap-4 text-sm ${summary.avgLifetimeDays !== undefined ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}
+        >
           {primaryItems.map((item) => (
             <div key={item.label}>
               <p className="text-xs text-muted-foreground">{item.label}</p>

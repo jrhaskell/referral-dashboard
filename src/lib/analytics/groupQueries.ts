@@ -11,6 +11,7 @@ export type GroupSummary = {
   conversionRate: number
   feePerUser: number
   kycRate: number
+  avgLifetimeDays?: number
 }
 
 export type GroupConcentration = {

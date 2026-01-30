@@ -19,8 +19,9 @@ function openDb() {
   })
 }
 
-export function buildCacheKey(customers: FileMeta, txs: FileMeta, referralCodes: FileMeta) {
-  return `${CACHE_VERSION}__${customers.name}:${customers.size}:${customers.lastModified}__${txs.name}:${txs.size}:${txs.lastModified}__${referralCodes.name}:${referralCodes.size}:${referralCodes.lastModified}`
+export function buildCacheKey(customers: FileMeta, txs: FileMeta[], referralCodes: FileMeta) {
+  const txKey = txs.map((tx) => `${tx.name}:${tx.size}:${tx.lastModified}`).join('|')
+  return `${CACHE_VERSION}__${customers.name}:${customers.size}:${customers.lastModified}__${txKey}__${referralCodes.name}:${referralCodes.size}:${referralCodes.lastModified}`
 }
 
 export async function getSnapshot(key: string): Promise<AnalyticsSnapshot | null> {

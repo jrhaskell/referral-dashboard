@@ -69,8 +69,10 @@ export function ReferralDetailPage() {
   }
 
   const metrics = getReferralMetrics(index, code, dateRange)
+  const lifetimeMetrics = getReferralMetrics(index, code, bounds)
   const dailySeries = getDailySeries(index, code, dateRange)
   const users = Array.from(referral.users.values())
+  const avgLifetimeDays = React.useMemo(() => getAverageLifetimeDays(referral), [referral])
 
   const propagationMap = React.useMemo(() => buildPropagationMap(index), [index])
   const descendantCache = React.useMemo(() => {
@@ -133,7 +135,8 @@ export function ReferralDetailPage() {
     usersWithRevenueTx: metrics.usersWithRevenueTx,
     volumeUsd: metrics.volumeUsd,
     feeUsd: metrics.feeUsd,
-    conversionRate: metrics.conversionRate,
+    conversionRate: lifetimeMetrics.conversionRate,
+    avgLifetimeDays,
     feePerUser: metrics.feePerUser,
     kycRate: metrics.kycRate,
   }
@@ -160,8 +163,8 @@ export function ReferralDetailPage() {
   const lifetimeMonths =
     Number.isFinite(lifetimeMonthsValue) && lifetimeMonthsValue > 0 ? lifetimeMonthsValue : 0
   const lifetimeArpu = arpuMetrics.feePerUser * lifetimeMonths
-  const estimatorKycRate = metrics.kycRate
-  const estimatedActiveUsers = adMetrics.signups * estimatorKycRate
+  const estimatorConversionRate = lifetimeMetrics.conversionRate
+  const estimatedActiveUsers = adMetrics.signups * estimatorConversionRate
   const estimatedFee = estimatedActiveUsers * lifetimeArpu
 
   const estimatedRoas = hasSpend && lifetimeMonths ? estimatedFee / adSpendValue : null
@@ -220,7 +223,7 @@ export function ReferralDetailPage() {
   const signupMax = signupValues.length ? Math.max(...signupValues) : 0
 
   const flags = [
-    metrics.signups > 50 && metrics.conversionRate < 0.1
+    metrics.signups > 50 && lifetimeMetrics.conversionRate < 0.1
       ? 'High signups with low conversion.'
       : null,
     feeConcentration > 0.6 ? 'Fee concentrated in top users.' : null,
@@ -298,6 +301,9 @@ export function ReferralDetailPage() {
         showConcentration={false}
         showFlags={false}
       />
+      <p className="text-xs text-muted-foreground">
+        Conversion rate and average lifetime use the full history range.
+      </p>
 
       <Card>
         <CardHeader>
@@ -408,8 +414,8 @@ export function ReferralDetailPage() {
 
           <div className="grid gap-4 md:grid-cols-4">
             <div>
-              <p className="text-xs text-muted-foreground">KYC rate</p>
-              <p className="text-lg font-semibold">{formatPercent(estimatorKycRate)}</p>
+              <p className="text-xs text-muted-foreground">Conversion rate</p>
+              <p className="text-lg font-semibold">{formatPercent(estimatorConversionRate)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Estimated active users</p>
@@ -436,7 +442,7 @@ export function ReferralDetailPage() {
               <Button variant="outline" size="sm" onClick={() => setAdSpendInput('')}>
                 Clear spend
               </Button>
-              <span>Estimated fee = signups × KYC rate × ARPU(30d) × lifetime months</span>
+              <span>Estimated fee = signups × conversion rate × ARPU(30d) × lifetime months</span>
             </div>
           </div>
         </CardContent>
@@ -707,10 +713,10 @@ const GRAPH_SPRING_DISTANCE = GRAPH_NODE_SIZE + GRAPH_COL_GAP
 const GRAPH_SPRING_STRENGTH = 0.12
 const GRAPH_DRAG_FOLLOW = 0.35
 const GRAPH_DRAG_SECONDARY_FOLLOW = 0.18
-const GRAPH_COLLISION_DISTANCE = GRAPH_NODE_SIZE * 1.05
-const GRAPH_COLLISION_STRENGTH = 0.65
-const GRAPH_REPULSION_DISTANCE = GRAPH_NODE_SIZE * 1.6
-const GRAPH_REPULSION_STRENGTH = 0.2
+const GRAPH_COLLISION_DISTANCE = GRAPH_NODE_SIZE + 12
+const GRAPH_COLLISION_STRENGTH = 1
+const GRAPH_REPULSION_DISTANCE = GRAPH_NODE_SIZE * 1.8
+const GRAPH_REPULSION_STRENGTH = 0.3
 
 function PropagationGraph({ graph }: { graph: GraphLayout }) {
   const containerRef = React.useRef<HTMLDivElement>(null)
@@ -723,11 +729,6 @@ function PropagationGraph({ graph }: { graph: GraphLayout }) {
     })
     return map
   }, [graph.edges])
-  const nodeTypes = React.useMemo(
-    () => new Map(graph.nodes.map((node) => [node.id, node.type])),
-    [graph.nodes],
-  )
-
   const [positions, setPositions] = React.useState(() =>
     new Map(graph.nodes.map((node) => [node.id, { x: node.x, y: node.y }])),
   )
@@ -779,56 +780,55 @@ function PropagationGraph({ graph }: { graph: GraphLayout }) {
     [graph.edges],
   )
 
-  const applyRepulsion = React.useCallback(
-    (next: Map<string, NodePosition>, fixedId?: string) => {
-      const entries = Array.from(next.entries())
-      for (let i = 0; i < entries.length; i += 1) {
-        const [idA] = entries[i]
-        for (let j = i + 1; j < entries.length; j += 1) {
-          const [idB] = entries[j]
-          const typeA = nodeTypes.get(idA)
-          const typeB = nodeTypes.get(idB)
-          if (!typeA || !typeB || typeA !== typeB) continue
+  const applyRepulsion = React.useCallback((next: Map<string, NodePosition>, fixedId?: string) => {
+    const entries = Array.from(next.entries())
+    for (let i = 0; i < entries.length; i += 1) {
+      const [idA] = entries[i]
+      for (let j = i + 1; j < entries.length; j += 1) {
+        const [idB] = entries[j]
 
-          const posA = next.get(idA)
-          const posB = next.get(idB)
-          if (!posA || !posB) continue
-          const dx = posB.x - posA.x
-          const dy = posB.y - posA.y
-          const distance = Math.max(1, Math.hypot(dx, dy))
+        const posA = next.get(idA)
+        const posB = next.get(idB)
+        if (!posA || !posB) continue
+        let dx = posB.x - posA.x
+        let dy = posB.y - posA.y
+        let distance = Math.hypot(dx, dy)
+        if (distance < 1) {
+          dx = 1
+          dy = 0
+          distance = 1
+        }
 
-          if (distance >= GRAPH_REPULSION_DISTANCE) continue
+        if (distance >= GRAPH_REPULSION_DISTANCE) continue
 
-          const isCollision = distance < GRAPH_COLLISION_DISTANCE
-          const targetDistance = isCollision ? GRAPH_COLLISION_DISTANCE : GRAPH_REPULSION_DISTANCE
-          const overlap = targetDistance - distance
-          const strength = isCollision ? GRAPH_COLLISION_STRENGTH : GRAPH_REPULSION_STRENGTH
-          const push = (overlap / distance) * strength
-          const pushX = (dx / distance) * push
-          const pushY = (dy / distance) * push
+        const isCollision = distance < GRAPH_COLLISION_DISTANCE
+        const targetDistance = isCollision ? GRAPH_COLLISION_DISTANCE : GRAPH_REPULSION_DISTANCE
+        const overlap = targetDistance - distance
+        const strength = isCollision ? GRAPH_COLLISION_STRENGTH : GRAPH_REPULSION_STRENGTH
+        const push = isCollision ? overlap * strength : (overlap / distance) * strength
+        const pushX = (dx / distance) * push
+        const pushY = (dy / distance) * push
 
-          const aFixed = fixedId && idA === fixedId
-          const bFixed = fixedId && idB === fixedId
+        const aFixed = fixedId && idA === fixedId
+        const bFixed = fixedId && idB === fixedId
 
-          if (!aFixed) {
-            const factor = bFixed ? 1 : 0.5
-            next.set(idA, {
-              x: Math.max(0, posA.x - pushX * factor),
-              y: Math.max(0, posA.y - pushY * factor),
-            })
-          }
-          if (!bFixed) {
-            const factor = aFixed ? 1 : 0.5
-            next.set(idB, {
-              x: Math.max(0, posB.x + pushX * factor),
-              y: Math.max(0, posB.y + pushY * factor),
-            })
-          }
+        if (!aFixed) {
+          const factor = bFixed ? 1 : 0.5
+          next.set(idA, {
+            x: Math.max(0, posA.x - pushX * factor),
+            y: Math.max(0, posA.y - pushY * factor),
+          })
+        }
+        if (!bFixed) {
+          const factor = aFixed ? 1 : 0.5
+          next.set(idB, {
+            x: Math.max(0, posB.x + pushX * factor),
+            y: Math.max(0, posB.y + pushY * factor),
+          })
         }
       }
-    },
-    [nodeTypes],
-  )
+    }
+  }, [])
 
   React.useEffect(() => {
     if (!dragState) return
@@ -1065,6 +1065,18 @@ function sumSignups(referral: ReferralIndex) {
     total += value
   })
   return total
+}
+
+function getAverageLifetimeDays(referral: ReferralIndex) {
+  let total = 0
+  let count = 0
+  referral.users.forEach((user) => {
+    if (!user.firstRevenueTxAt || !user.lastRevenueTxAt) return
+    const diffMs = Math.max(0, user.lastRevenueTxAt - user.firstRevenueTxAt)
+    total += diffMs / 86400000
+    count += 1
+  })
+  return count ? total / count : 0
 }
 
 function buildAveragePropagationRate(index: AnalyticsIndex, cache: Map<string, DescendantStats>) {

@@ -29,6 +29,7 @@ import {
   getReferralMetrics,
   serializeIndex,
   type ReferralMetrics,
+  type ReferralIndex,
 } from '@/lib/analytics'
 import { buildDailyStackedSeries } from '@/lib/analytics/buildDailySeries'
 import { useAnalytics } from '@/lib/analytics/context'
@@ -51,12 +52,26 @@ export function HomePage() {
 
   const bounds = getRangeBounds(index)
   const range: DateRange = bounds ? dateRange : { start: dateRange.start, end: dateRange.end }
+  const lifetimeRange = bounds ?? range
 
   const referralCodes = React.useMemo(() => getReferralList(index), [index])
   const metricsByCode = React.useMemo(() => {
     const entries = referralCodes.map((code) => [code, getReferralMetrics(index, code, range)])
     return Object.fromEntries(entries) as Record<string, ReferralMetrics>
   }, [index, referralCodes, range])
+
+  const avgLifetimeByCode = React.useMemo(() => {
+    const entries = referralCodes.map((code) => {
+      const referral = index.referrals.get(code)
+      return [code, referral ? getAverageLifetimeDays(referral) : 0]
+    })
+    return Object.fromEntries(entries) as Record<string, number>
+  }, [index, referralCodes])
+
+  const lifetimeMetricsByCode = React.useMemo(() => {
+    const entries = referralCodes.map((code) => [code, getReferralMetrics(index, code, lifetimeRange)])
+    return Object.fromEntries(entries) as Record<string, ReferralMetrics>
+  }, [index, referralCodes, lifetimeRange])
 
   const arpuRange = React.useMemo(() => {
     if (!bounds) return range
@@ -177,14 +192,22 @@ export function HomePage() {
         cell: ({ row }: any) => formatUsd(arpuByCode[row.original.code]?.feePerUser ?? 0),
       },
       {
-        accessorKey: variant === 'quality' ? 'feePerUser' : variant === 'kyc' ? 'kycRate' : 'conversionRate',
+        accessorFn: (row: ReferralMetrics) => {
+          if (variant === 'quality') return row.feePerUser
+          if (variant === 'kyc') return row.kycRate
+          if (variant === 'revenue') return lifetimeMetricsByCode[row.code]?.conversionRate ?? 0
+          return row.conversionRate
+        },
         header: variant === 'quality' ? 'Fee / User' : variant === 'kyc' ? 'KYC Rate' : 'Conversion',
-        cell: ({ row }: any) =>
-          variant === 'quality'
-            ? formatUsd(row.original.feePerUser)
-            : variant === 'kyc'
-              ? formatPercent(row.original.kycRate)
-              : formatPercent(row.original.conversionRate),
+        cell: ({ row }: any) => {
+          if (variant === 'quality') return formatUsd(row.original.feePerUser)
+          if (variant === 'kyc') return formatPercent(row.original.kycRate)
+          const value =
+            variant === 'revenue'
+              ? lifetimeMetricsByCode[row.original.code]?.conversionRate ?? 0
+              : row.original.conversionRate
+          return formatPercent(value)
+        },
       },
       {
         accessorKey:
@@ -199,12 +222,23 @@ export function HomePage() {
             : variant === 'kyc'
               ? 'Conversion'
               : 'Median time to first tx',
-        cell: ({ row }: any) =>
-          variant === 'quality'
-            ? formatPercent(row.original.retention30d)
-            : variant === 'kyc'
-              ? formatPercent(row.original.conversionRate)
-              : `${row.original.timeToFirstTxMedianDays.toFixed(1)}d`,
+        accessorFn: (row: ReferralMetrics) => {
+          if (variant === 'quality') return row.retention30d
+          if (variant === 'kyc') return row.conversionRate
+          if (variant === 'revenue') {
+            return lifetimeMetricsByCode[row.code]?.timeToFirstTxMedianDays ?? 0
+          }
+          return row.timeToFirstTxMedianDays
+        },
+        cell: ({ row }: any) => {
+          if (variant === 'quality') return formatPercent(row.original.retention30d)
+          if (variant === 'kyc') return formatPercent(row.original.conversionRate)
+          const value =
+            variant === 'revenue'
+              ? lifetimeMetricsByCode[row.original.code]?.timeToFirstTxMedianDays ?? 0
+              : row.original.timeToFirstTxMedianDays
+          return `${value.toFixed(1)}d`
+        },
       },
     ]
 
@@ -214,11 +248,13 @@ export function HomePage() {
         header: 'Estimated fee',
         accessorFn: (row: ReferralMetrics) => {
           const arpu = arpuByCode[row.code]?.feePerUser ?? 0
-          return row.signups * row.kycRate * arpu
+          const conversionRate = lifetimeMetricsByCode[row.code]?.conversionRate ?? 0
+          return row.signups * conversionRate * arpu
         },
         cell: ({ row }: any) => {
           const arpu = arpuByCode[row.original.code]?.feePerUser ?? 0
-          return formatUsd(row.original.signups * row.original.kycRate * arpu)
+          const conversionRate = lifetimeMetricsByCode[row.original.code]?.conversionRate ?? 0
+          return formatUsd(row.original.signups * conversionRate * arpu)
         },
       })
       columns.splice(6, 0, {
@@ -226,6 +262,12 @@ export function HomePage() {
         header: 'KYC rate',
         accessorFn: (row: ReferralMetrics) => row.kycRate,
         cell: ({ row }: any) => formatPercent(row.original.kycRate),
+      })
+      columns.push({
+        id: 'avgLifetimeDays',
+        header: 'Avg lifetime (days)',
+        accessorFn: (row: ReferralMetrics) => avgLifetimeByCode[row.code] ?? 0,
+        cell: ({ row }: any) => `${(avgLifetimeByCode[row.original.code] ?? 0).toFixed(1)}d`,
       })
     }
 
@@ -365,6 +407,18 @@ export function HomePage() {
       <DebugPanel index={index} />
     </div>
   )
+}
+
+function getAverageLifetimeDays(referral: ReferralIndex) {
+  let total = 0
+  let count = 0
+  referral.users.forEach((user) => {
+    if (!user.firstRevenueTxAt || !user.lastRevenueTxAt) return
+    const diffMs = Math.max(0, user.lastRevenueTxAt - user.firstRevenueTxAt)
+    total += diffMs / 86400000
+    count += 1
+  })
+  return count ? total / count : 0
 }
 
 function buildLast30Range(endDate: string, min: string, max: string): DateRange {

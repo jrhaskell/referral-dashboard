@@ -1,0 +1,18 @@
+{
+  "customersCsv": "Clientes.csv",
+  "referralCodesCsv": "Códigos com seus respectivos usos.csv",
+  "ndjsonFiles": [
+    "ndjson/2025-02/txs-01-02-2025-01-03-2025.ndjson",
+    "ndjson/2025-03/txs-01-03-2025-01-04-2025.ndjson",
+    "ndjson/2025-04/txs-01-04-2025-01-05-2025.ndjson",
+    "ndjson/2025-05/txs-01-05-2025-01-06-2025.ndjson",
+    "ndjson/2025-06/txs-01-06-2025-01-07-2025.ndjson",
+    "ndjson/2025-07/txs-01-07-2025-01-08-2025.ndjson",
+    "ndjson/2025-08/txs-01-08-2025-01-09-2025.ndjson",
+    "ndjson/2025-09/txs-01-09-2025-01-10-2025.ndjson",
+    "ndjson/2025-10/txs-01-10-2025-01-11-2025.ndjson",
+    "ndjson/2025-11/txs-01-11-2025-01-12-2025.ndjson",
+    "ndjson/2025-12/txs-01-12-2025-01-01-2026.ndjson",
+    "ndjson/2026-01/txs-01-01-2026-28-01-2026.ndjson"
+  ]
+}
