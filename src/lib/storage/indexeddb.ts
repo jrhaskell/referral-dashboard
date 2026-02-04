@@ -3,7 +3,7 @@ import type { AnalyticsSnapshot, FileMeta } from '@/lib/analytics'
 const DB_NAME = 'referral-analytics'
 const STORE_NAME = 'snapshots'
 const DB_VERSION = 1
-const CACHE_VERSION = 'v5-customer-usage'
+const CACHE_VERSION = 'v11-token-out'
 
 function openDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {

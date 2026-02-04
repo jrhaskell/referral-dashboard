@@ -39,6 +39,26 @@ export type DailyAgg = {
   revenueTxCount: number
 }
 
+export type FeeCategoryAgg = {
+  feeUsd: number
+  revenueTxCount: number
+}
+
+export type VolumeCategoryAgg = {
+  volumeUsd: number
+  revenueTxCount: number
+}
+
+export type TokenVolumeAgg = {
+  volumeUsd: number
+  txCount: number
+}
+
+export type TokenCategoryAgg = {
+  volumeUsd: number
+  txCount: number
+}
+
 export type UserAgg = {
   wallet: string
   referral: string
@@ -62,6 +82,13 @@ export type ReferralIndex = {
   kycByDate: Map<string, number>
   firstRevenueTxByDate: Map<string, number>
   daily: Map<string, DailyAgg>
+  feeByCategory: Map<string, FeeCategoryAgg>
+  feeByCategoryDaily: Map<string, Map<string, FeeCategoryAgg>>
+  volumeByCategory: Map<string, VolumeCategoryAgg>
+  volumeByCategoryDaily: Map<string, Map<string, VolumeCategoryAgg>>
+  tokenVolumeBySymbol: Map<string, TokenVolumeAgg>
+  tokenVolumeBySymbolDaily: Map<string, Map<string, TokenVolumeAgg>>
+  tokenCategoryBySymbolDaily: Map<string, Map<string, Map<string, TokenCategoryAgg>>>
   users: Map<string, UserAgg>
   topRevenueTxs: RevenueTxLite[]
   feeUsdTotal: number
@@ -152,6 +179,16 @@ export type SerializedReferral = {
   kycByDate: Array<[string, number]>
   firstRevenueTxByDate: Array<[string, number]>
   daily: Array<[string, DailyAgg]>
+  feeByCategory: Array<[string, FeeCategoryAgg]>
+  feeByCategoryDaily: Array<{ category: string; daily: Array<[string, FeeCategoryAgg]> }>
+  volumeByCategory: Array<[string, VolumeCategoryAgg]>
+  volumeByCategoryDaily: Array<{ category: string; daily: Array<[string, VolumeCategoryAgg]> }>
+  tokenVolumeBySymbol: Array<[string, TokenVolumeAgg]>
+  tokenVolumeBySymbolDaily: Array<{ symbol: string; daily: Array<[string, TokenVolumeAgg]> }>
+  tokenCategoryBySymbolDaily: Array<{
+    symbol: string
+    daily: Array<{ date: string; categories: Array<[string, TokenCategoryAgg]> }>
+  }>
   users: UserAgg[]
   topRevenueTxs: RevenueTxLite[]
   feeUsdTotal: number
@@ -182,6 +219,13 @@ function createReferralIndex(code: string): ReferralIndex {
     kycByDate: new Map(),
     firstRevenueTxByDate: new Map(),
     daily: new Map(),
+    feeByCategory: new Map(),
+    feeByCategoryDaily: new Map(),
+    volumeByCategory: new Map(),
+    volumeByCategoryDaily: new Map(),
+    tokenVolumeBySymbol: new Map(),
+    tokenVolumeBySymbolDaily: new Map(),
+    tokenCategoryBySymbolDaily: new Map(),
     users: new Map(),
     topRevenueTxs: [],
     feeUsdTotal: 0,
@@ -229,6 +273,80 @@ function ensureDaily(referral: ReferralIndex, date: string) {
   if (existing) return existing
   const created = { date, feeUsd: 0, volumeUsd: 0, revenueTxCount: 0 }
   referral.daily.set(date, created)
+  return created
+}
+
+function ensureFeeCategory(referral: ReferralIndex, category: string) {
+  const existing = referral.feeByCategory.get(category)
+  if (existing) return existing
+  const created = { feeUsd: 0, revenueTxCount: 0 }
+  referral.feeByCategory.set(category, created)
+  return created
+}
+
+function ensureFeeCategoryDaily(referral: ReferralIndex, category: string, date: string) {
+  const categoryMap = referral.feeByCategoryDaily.get(category) ?? new Map<string, FeeCategoryAgg>()
+  const existing = categoryMap.get(date)
+  if (existing) return existing
+  const created = { feeUsd: 0, revenueTxCount: 0 }
+  categoryMap.set(date, created)
+  referral.feeByCategoryDaily.set(category, categoryMap)
+  return created
+}
+
+function ensureVolumeCategory(referral: ReferralIndex, category: string) {
+  const existing = referral.volumeByCategory.get(category)
+  if (existing) return existing
+  const created = { volumeUsd: 0, revenueTxCount: 0 }
+  referral.volumeByCategory.set(category, created)
+  return created
+}
+
+function ensureVolumeCategoryDaily(referral: ReferralIndex, category: string, date: string) {
+  const categoryMap = referral.volumeByCategoryDaily.get(category) ??
+    new Map<string, VolumeCategoryAgg>()
+  const existing = categoryMap.get(date)
+  if (existing) return existing
+  const created = { volumeUsd: 0, revenueTxCount: 0 }
+  categoryMap.set(date, created)
+  referral.volumeByCategoryDaily.set(category, categoryMap)
+  return created
+}
+
+function ensureTokenVolume(referral: ReferralIndex, symbol: string) {
+  const existing = referral.tokenVolumeBySymbol.get(symbol)
+  if (existing) return existing
+  const created = { volumeUsd: 0, txCount: 0 }
+  referral.tokenVolumeBySymbol.set(symbol, created)
+  return created
+}
+
+function ensureTokenVolumeDaily(referral: ReferralIndex, symbol: string, date: string) {
+  const tokenMap = referral.tokenVolumeBySymbolDaily.get(symbol) ??
+    new Map<string, TokenVolumeAgg>()
+  const existing = tokenMap.get(date)
+  if (existing) return existing
+  const created = { volumeUsd: 0, txCount: 0 }
+  tokenMap.set(date, created)
+  referral.tokenVolumeBySymbolDaily.set(symbol, tokenMap)
+  return created
+}
+
+function ensureTokenCategoryDaily(
+  referral: ReferralIndex,
+  symbol: string,
+  date: string,
+  category: string,
+) {
+  const tokenMap = referral.tokenCategoryBySymbolDaily.get(symbol) ??
+    new Map<string, Map<string, TokenCategoryAgg>>()
+  const dateMap = tokenMap.get(date) ?? new Map<string, TokenCategoryAgg>()
+  const existing = dateMap.get(category)
+  if (existing) return existing
+  const created = { volumeUsd: 0, txCount: 0 }
+  dateMap.set(category, created)
+  tokenMap.set(date, dateMap)
+  referral.tokenCategoryBySymbolDaily.set(symbol, tokenMap)
   return created
 }
 
@@ -322,6 +440,8 @@ export type ParsedRevenueTx = {
   createdAt: number
   feeUsd: number
   volumeUsd: number
+  category: string
+  tokens?: Array<{ symbol: string; volumeUsd: number }>
   hash?: string
 }
 
@@ -334,6 +454,7 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
   }
   const referral = getReferral(index, customer.referral)
   const dateKey = toDateKey(tx.createdAt)
+  const category = tx.category || 'Unknown'
 
   const userAgg = referral.users.get(tx.wallet) ?? index.usersByWallet.get(tx.wallet)
   if (!userAgg) return
@@ -360,10 +481,69 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
   daily.volumeUsd += tx.volumeUsd
   daily.revenueTxCount += 1
 
+  const categoryAgg = ensureFeeCategory(referral, category)
+  categoryAgg.feeUsd += tx.feeUsd
+  categoryAgg.revenueTxCount += 1
+
+  const categoryDaily = ensureFeeCategoryDaily(referral, category, dateKey)
+  categoryDaily.feeUsd += tx.feeUsd
+  categoryDaily.revenueTxCount += 1
+
+  const volumeCategoryAgg = ensureVolumeCategory(referral, category)
+  volumeCategoryAgg.volumeUsd += tx.volumeUsd
+  volumeCategoryAgg.revenueTxCount += 1
+
+  const volumeCategoryDaily = ensureVolumeCategoryDaily(referral, category, dateKey)
+  volumeCategoryDaily.volumeUsd += tx.volumeUsd
+  volumeCategoryDaily.revenueTxCount += 1
+
   const globalDaily = ensureDaily(index.global, dateKey)
   globalDaily.feeUsd += tx.feeUsd
   globalDaily.volumeUsd += tx.volumeUsd
   globalDaily.revenueTxCount += 1
+
+  const globalCategoryAgg = ensureFeeCategory(index.global, category)
+  globalCategoryAgg.feeUsd += tx.feeUsd
+  globalCategoryAgg.revenueTxCount += 1
+
+  const globalCategoryDaily = ensureFeeCategoryDaily(index.global, category, dateKey)
+  globalCategoryDaily.feeUsd += tx.feeUsd
+  globalCategoryDaily.revenueTxCount += 1
+
+  const globalVolumeCategoryAgg = ensureVolumeCategory(index.global, category)
+  globalVolumeCategoryAgg.volumeUsd += tx.volumeUsd
+  globalVolumeCategoryAgg.revenueTxCount += 1
+
+  const globalVolumeCategoryDaily = ensureVolumeCategoryDaily(index.global, category, dateKey)
+  globalVolumeCategoryDaily.volumeUsd += tx.volumeUsd
+  globalVolumeCategoryDaily.revenueTxCount += 1
+
+  if (tx.tokens?.length) {
+    tx.tokens.forEach((token) => {
+      if (!token.symbol || !token.volumeUsd) return
+      const tokenAgg = ensureTokenVolume(referral, token.symbol)
+      tokenAgg.volumeUsd += token.volumeUsd
+      tokenAgg.txCount += 1
+      const tokenDaily = ensureTokenVolumeDaily(referral, token.symbol, dateKey)
+      tokenDaily.volumeUsd += token.volumeUsd
+      tokenDaily.txCount += 1
+
+      const tokenCategoryDaily = ensureTokenCategoryDaily(referral, token.symbol, dateKey, category)
+      tokenCategoryDaily.volumeUsd += token.volumeUsd
+      tokenCategoryDaily.txCount += 1
+
+      const globalTokenAgg = ensureTokenVolume(index.global, token.symbol)
+      globalTokenAgg.volumeUsd += token.volumeUsd
+      globalTokenAgg.txCount += 1
+      const globalTokenDaily = ensureTokenVolumeDaily(index.global, token.symbol, dateKey)
+      globalTokenDaily.volumeUsd += token.volumeUsd
+      globalTokenDaily.txCount += 1
+
+      const globalTokenCategoryDaily = ensureTokenCategoryDaily(index.global, token.symbol, dateKey, category)
+      globalTokenCategoryDaily.volumeUsd += token.volumeUsd
+      globalTokenCategoryDaily.txCount += 1
+    })
+  }
 
   const customerDaily = ensureCustomerDaily(index, customer.id, dateKey)
   customerDaily.feeUsd += tx.feeUsd
@@ -496,6 +676,212 @@ export function getDailySeries(index: AnalyticsIndex, code: string, range: DateR
   return series
 }
 
+export type FeeCategoryBreakdown = {
+  category: string
+  feeUsd: number
+  revenueTxCount: number
+}
+
+export function getFeeCategoryBreakdown(index: AnalyticsIndex, code: string, range: DateRange) {
+  const referral = code === 'all' ? index.global : getReferral(index, code)
+  const totals = new Map<string, FeeCategoryAgg>()
+  referral.feeByCategoryDaily.forEach((dailyMap, category) => {
+    let feeUsd = 0
+    let revenueTxCount = 0
+    dailyMap.forEach((value, date) => {
+      if (!isDateInRange(date, range)) return
+      feeUsd += value.feeUsd
+      revenueTxCount += value.revenueTxCount
+    })
+    if (feeUsd > 0) {
+      totals.set(category, { feeUsd, revenueTxCount })
+    }
+  })
+  return Array.from(totals.entries())
+    .map(([category, value]) => ({ category, feeUsd: value.feeUsd, revenueTxCount: value.revenueTxCount }))
+    .sort((a, b) => b.feeUsd - a.feeUsd)
+}
+
+const VOLUME_CATEGORY_ORDER = [
+  'Swap',
+  'Crypto Deposits',
+  'Crypto Withdraw',
+  'Liquidity Pool',
+  'On Ramp Transfers',
+  'Off Ramp',
+]
+
+function normalizeVolumeCategory(category: string) {
+  const normalized = category.trim().toUpperCase()
+  if (normalized === 'SWAP' || normalized === 'CROSS_SWAP') return 'Swap'
+  if (normalized === 'CRYPTO_DEPOSIT') return 'Crypto Deposits'
+  if (normalized === 'CRYPTO_WITHDRAW') return 'Crypto Withdraw'
+  if (normalized.startsWith('LIQUIDITY_POOL')) return 'Liquidity Pool'
+  if (normalized === 'ON_RAMP') return 'On Ramp Transfers'
+  if (normalized === 'OFF_RAMP') return 'Off Ramp'
+  return ''
+}
+
+export type VolumeCategoryBreakdown = {
+  category: string
+  volumeUsd: number
+  revenueTxCount: number
+}
+
+export type VolumeCategoryDailySeries = {
+  data: Array<Record<string, number | string>>
+  keys: string[]
+}
+
+export type TokenVolumeBreakdown = {
+  symbol: string
+  volumeUsd: number
+  txCount: number
+}
+
+export type TokenTransactionSummary = {
+  symbol: string
+  txCount: number
+  volumeUsd: number
+  categories: Array<{ category: string; txCount: number; volumeUsd: number }>
+}
+
+export function getVolumeCategoryBreakdown(index: AnalyticsIndex, code: string, range: DateRange) {
+  const referral = code === 'all' ? index.global : getReferral(index, code)
+  const totals = new Map<string, VolumeCategoryAgg>()
+  referral.volumeByCategoryDaily.forEach((dailyMap, category) => {
+    let volumeUsd = 0
+    let revenueTxCount = 0
+    dailyMap.forEach((value, date) => {
+      if (!isDateInRange(date, range)) return
+      volumeUsd += value.volumeUsd
+      revenueTxCount += value.revenueTxCount
+    })
+    if (volumeUsd > 0) {
+      totals.set(category, { volumeUsd, revenueTxCount })
+    }
+  })
+
+  const grouped = new Map<string, VolumeCategoryAgg>()
+  totals.forEach((value, category) => {
+    const label = normalizeVolumeCategory(category)
+    if (!label) return
+    const existing = grouped.get(label) ?? { volumeUsd: 0, revenueTxCount: 0 }
+    existing.volumeUsd += value.volumeUsd
+    existing.revenueTxCount += value.revenueTxCount
+    grouped.set(label, existing)
+  })
+
+  const ordered = VOLUME_CATEGORY_ORDER.map((label) => ({
+    category: label,
+    volumeUsd: grouped.get(label)?.volumeUsd ?? 0,
+    revenueTxCount: grouped.get(label)?.revenueTxCount ?? 0,
+  }))
+
+  return ordered
+}
+
+export function getVolumeCategoryDailySeries(
+  index: AnalyticsIndex,
+  code: string,
+  range: DateRange,
+): VolumeCategoryDailySeries {
+  const referral = code === 'all' ? index.global : getReferral(index, code)
+  const days = eachDayOfInterval({ start: new Date(range.start), end: new Date(range.end) }).map((day) =>
+    format(day, 'yyyy-MM-dd'),
+  )
+
+  const data = days.map((date) => ({ date, total: 0 }))
+  const rowByDate = new Map(data.map((row) => [row.date as string, row]))
+  const totalsByCategory = new Map<string, number>()
+
+  referral.volumeByCategoryDaily.forEach((dailyMap, category) => {
+    const label = normalizeVolumeCategory(category)
+    if (!label) return
+    dailyMap.forEach((value, date) => {
+      if (!isDateInRange(date, range)) return
+      const row = rowByDate.get(date)
+      if (!row) return
+      const current = Number(row[label] ?? 0)
+      row[label] = current + value.volumeUsd
+      row.total = Number(row.total ?? 0) + value.volumeUsd
+      totalsByCategory.set(label, (totalsByCategory.get(label) ?? 0) + value.volumeUsd)
+    })
+  })
+
+  const keys = [...VOLUME_CATEGORY_ORDER]
+
+  return { data, keys }
+}
+
+export function getTokenVolumeBreakdown(index: AnalyticsIndex, code: string, range: DateRange) {
+  const referral = code === 'all' ? index.global : getReferral(index, code)
+  const totals = new Map<string, TokenVolumeAgg>()
+  referral.tokenVolumeBySymbolDaily.forEach((dailyMap, symbol) => {
+    let volumeUsd = 0
+    let txCount = 0
+    dailyMap.forEach((value, date) => {
+      if (!isDateInRange(date, range)) return
+      volumeUsd += value.volumeUsd
+      txCount += value.txCount
+    })
+    if (volumeUsd > 0) {
+      totals.set(symbol, { volumeUsd, txCount })
+    }
+  })
+
+  return Array.from(totals.entries())
+    .map(([symbol, value]) => ({ symbol, volumeUsd: value.volumeUsd, txCount: value.txCount }))
+    .sort((a, b) => b.volumeUsd - a.volumeUsd)
+}
+
+export function getTopTokenByVolume(index: AnalyticsIndex, code: string, range: DateRange) {
+  const breakdown = getTokenVolumeBreakdown(index, code, range)
+  return breakdown.length ? breakdown[0] : null
+}
+
+export function getTopTokenTransactions(
+  index: AnalyticsIndex,
+  code: string,
+  range: DateRange,
+  limit = 10,
+): TokenTransactionSummary[] {
+  const referral = code === 'all' ? index.global : getReferral(index, code)
+  const totals = new Map<
+    string,
+    { txCount: number; volumeUsd: number; categories: Map<string, TokenCategoryAgg> }
+  >()
+
+  referral.tokenCategoryBySymbolDaily.forEach((dateMap, symbol) => {
+    dateMap.forEach((categoryMap, date) => {
+      if (!isDateInRange(date, range)) return
+      const entry = totals.get(symbol) ?? { txCount: 0, volumeUsd: 0, categories: new Map() }
+      categoryMap.forEach((value, category) => {
+        entry.txCount += value.txCount
+        entry.volumeUsd += value.volumeUsd
+        const existing = entry.categories.get(category) ?? { txCount: 0, volumeUsd: 0 }
+        existing.txCount += value.txCount
+        existing.volumeUsd += value.volumeUsd
+        entry.categories.set(category, existing)
+      })
+      totals.set(symbol, entry)
+    })
+  })
+
+  const sorted = Array.from(totals.entries())
+    .map(([symbol, value]) => ({
+      symbol,
+      txCount: value.txCount,
+      volumeUsd: value.volumeUsd,
+      categories: Array.from(value.categories.entries())
+        .map(([category, agg]) => ({ category, txCount: agg.txCount, volumeUsd: agg.volumeUsd }))
+        .sort((a, b) => b.txCount - a.txCount || b.volumeUsd - a.volumeUsd),
+    }))
+    .sort((a, b) => b.volumeUsd - a.volumeUsd || b.txCount - a.txCount)
+
+  return sorted.slice(0, limit)
+}
+
 export function getReferralList(index: AnalyticsIndex) {
   return Array.from(index.referrals.keys()).sort()
 }
@@ -512,6 +898,34 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
       kycByDate: Array.from(index.global.kycByDate.entries()),
       firstRevenueTxByDate: Array.from(index.global.firstRevenueTxByDate.entries()),
       daily: Array.from(index.global.daily.entries()),
+      feeByCategory: Array.from(index.global.feeByCategory.entries()),
+      feeByCategoryDaily: Array.from(index.global.feeByCategoryDaily.entries()).map(([category, daily]) => ({
+        category,
+        daily: Array.from(daily.entries()),
+      })),
+      volumeByCategory: Array.from(index.global.volumeByCategory.entries()),
+      volumeByCategoryDaily: Array.from(index.global.volumeByCategoryDaily.entries()).map(
+        ([category, daily]) => ({
+          category,
+          daily: Array.from(daily.entries()),
+        }),
+      ),
+      tokenVolumeBySymbol: Array.from(index.global.tokenVolumeBySymbol.entries()),
+      tokenVolumeBySymbolDaily: Array.from(index.global.tokenVolumeBySymbolDaily.entries()).map(
+        ([symbol, daily]) => ({
+          symbol,
+          daily: Array.from(daily.entries()),
+        }),
+      ),
+      tokenCategoryBySymbolDaily: Array.from(index.global.tokenCategoryBySymbolDaily.entries()).map(
+        ([symbol, daily]) => ({
+          symbol,
+          daily: Array.from(daily.entries()).map(([date, categories]) => ({
+            date,
+            categories: Array.from(categories.entries()),
+          })),
+        }),
+      ),
       users: Array.from(index.global.users.values()),
       topRevenueTxs: index.global.topRevenueTxs,
       feeUsdTotal: index.global.feeUsdTotal,
@@ -524,6 +938,34 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
       kycByDate: Array.from(referral.kycByDate.entries()),
       firstRevenueTxByDate: Array.from(referral.firstRevenueTxByDate.entries()),
       daily: Array.from(referral.daily.entries()),
+      feeByCategory: Array.from(referral.feeByCategory.entries()),
+      feeByCategoryDaily: Array.from(referral.feeByCategoryDaily.entries()).map(([category, daily]) => ({
+        category,
+        daily: Array.from(daily.entries()),
+      })),
+      volumeByCategory: Array.from(referral.volumeByCategory.entries()),
+      volumeByCategoryDaily: Array.from(referral.volumeByCategoryDaily.entries()).map(
+        ([category, daily]) => ({
+          category,
+          daily: Array.from(daily.entries()),
+        }),
+      ),
+      tokenVolumeBySymbol: Array.from(referral.tokenVolumeBySymbol.entries()),
+      tokenVolumeBySymbolDaily: Array.from(referral.tokenVolumeBySymbolDaily.entries()).map(
+        ([symbol, daily]) => ({
+          symbol,
+          daily: Array.from(daily.entries()),
+        }),
+      ),
+      tokenCategoryBySymbolDaily: Array.from(referral.tokenCategoryBySymbolDaily.entries()).map(
+        ([symbol, daily]) => ({
+          symbol,
+          daily: Array.from(daily.entries()).map(([date, categories]) => ({
+            date,
+            categories: Array.from(categories.entries()),
+          })),
+        }),
+      ),
       users: Array.from(referral.users.values()),
       topRevenueTxs: referral.topRevenueTxs,
       feeUsdTotal: referral.feeUsdTotal,
@@ -556,6 +998,29 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
     global.firstRevenueTxByDate.set(date, value),
   )
   snapshot.global.daily.forEach(([date, value]) => global.daily.set(date, value))
+  snapshot.global.feeByCategory.forEach(([category, value]) => global.feeByCategory.set(category, value))
+  snapshot.global.feeByCategoryDaily.forEach((entry) =>
+    global.feeByCategoryDaily.set(entry.category, new Map(entry.daily)),
+  )
+  snapshot.global.volumeByCategory?.forEach(([category, value]) =>
+    global.volumeByCategory.set(category, value),
+  )
+  snapshot.global.volumeByCategoryDaily?.forEach((entry) =>
+    global.volumeByCategoryDaily.set(entry.category, new Map(entry.daily)),
+  )
+  snapshot.global.tokenVolumeBySymbol?.forEach(([symbol, value]) =>
+    global.tokenVolumeBySymbol.set(symbol, value),
+  )
+  snapshot.global.tokenVolumeBySymbolDaily?.forEach((entry) =>
+    global.tokenVolumeBySymbolDaily.set(entry.symbol, new Map(entry.daily)),
+  )
+  snapshot.global.tokenCategoryBySymbolDaily?.forEach((entry) => {
+    const dateMap = new Map<string, Map<string, TokenCategoryAgg>>()
+    entry.daily.forEach((dailyEntry) => {
+      dateMap.set(dailyEntry.date, new Map(dailyEntry.categories))
+    })
+    global.tokenCategoryBySymbolDaily.set(entry.symbol, dateMap)
+  })
   snapshot.global.users.forEach((user) => global.users.set(user.wallet, user))
   global.topRevenueTxs = snapshot.global.topRevenueTxs
   global.feeUsdTotal = snapshot.global.feeUsdTotal
@@ -571,6 +1036,25 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
       created.firstRevenueTxByDate.set(date, value),
     )
     referral.daily.forEach(([date, value]) => created.daily.set(date, value))
+    referral.feeByCategory.forEach(([category, value]) => created.feeByCategory.set(category, value))
+    referral.feeByCategoryDaily.forEach((entry) =>
+      created.feeByCategoryDaily.set(entry.category, new Map(entry.daily)),
+    )
+    referral.volumeByCategory?.forEach(([category, value]) => created.volumeByCategory.set(category, value))
+    referral.volumeByCategoryDaily?.forEach((entry) =>
+      created.volumeByCategoryDaily.set(entry.category, new Map(entry.daily)),
+    )
+    referral.tokenVolumeBySymbol?.forEach(([symbol, value]) => created.tokenVolumeBySymbol.set(symbol, value))
+    referral.tokenVolumeBySymbolDaily?.forEach((entry) =>
+      created.tokenVolumeBySymbolDaily.set(entry.symbol, new Map(entry.daily)),
+    )
+    referral.tokenCategoryBySymbolDaily?.forEach((entry) => {
+      const dateMap = new Map<string, Map<string, TokenCategoryAgg>>()
+      entry.daily.forEach((dailyEntry) => {
+        dateMap.set(dailyEntry.date, new Map(dailyEntry.categories))
+      })
+      created.tokenCategoryBySymbolDaily.set(entry.symbol, dateMap)
+    })
     referral.users.forEach((user) => created.users.set(user.wallet, user))
     referral.users.forEach((user) => index.usersByWallet.set(user.wallet, user))
     created.topRevenueTxs = referral.topRevenueTxs

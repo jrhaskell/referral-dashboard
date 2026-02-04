@@ -13,6 +13,15 @@ export type NdjsonProgress = {
 }
 
 const EXCLUDED_TOKENS = new Set(['uxlink'])
+const COMPLETED_STATUSES = new Set(['COMPLETED', 'SUCCESS'])
+
+function pickUsd(candidates: Array<unknown>) {
+  for (const candidate of candidates) {
+    const value = Number(candidate)
+    if (Number.isFinite(value) && value > 0) return value
+  }
+  return 0
+}
 
 function hasExcludedToken(data: Record<string, any>) {
   const candidates = [
@@ -37,6 +46,54 @@ function hasExcludedToken(data: Record<string, any>) {
   return candidates.some(
     (value) => typeof value === 'string' && EXCLUDED_TOKENS.has(value.toLowerCase()),
   )
+}
+
+function sumTokenUsd(tokens: unknown) {
+  if (!Array.isArray(tokens)) return 0
+  let total = 0
+  tokens.forEach((token) => {
+    const value = Number((token as any)?.amountIn?.usd)
+    if (Number.isFinite(value) && value > 0) total += value
+  })
+  return total
+}
+
+function extractTokens(data: Record<string, any>, tokensVolumeUsd: number, type: unknown) {
+  const tokens = data?.tokens
+  if (Array.isArray(tokens) && tokens.length) {
+    const list = tokens
+      .map((token) => {
+        const symbol =
+          token?.token?.symbol ?? token?.cryptoCurrency?.symbol ?? token?.token?.name ?? token?.cryptoCurrency?.name
+        const volumeUsd = Number(token?.amountIn?.usd)
+        if (!symbol || !Number.isFinite(volumeUsd) || volumeUsd <= 0) return null
+        return { symbol: String(symbol).trim().toUpperCase(), volumeUsd }
+      })
+      .filter(Boolean)
+    return list.length ? list : undefined
+  }
+
+  const normalizedType = typeof type === 'string' ? type.trim().toUpperCase() : ''
+  const isSwap = normalizedType === 'SWAP' || normalizedType === 'CROSS_SWAP'
+
+  const fallbackSymbol = isSwap
+    ? data?.receivedAmount?.token?.symbol ??
+      data?.receivedAmount?.cryptoCurrency?.symbol ??
+      data?.receivedCryptoCurrency?.symbol ??
+      data?.sentAmount?.token?.symbol ??
+      data?.sentAmount?.cryptoCurrency?.symbol ??
+      data?.sentCryptoCurrency?.symbol
+    : data?.sentAmount?.token?.symbol ??
+      data?.sentAmount?.cryptoCurrency?.symbol ??
+      data?.receivedAmount?.token?.symbol ??
+      data?.receivedAmount?.cryptoCurrency?.symbol ??
+      data?.sentCryptoCurrency?.symbol ??
+      data?.receivedCryptoCurrency?.symbol
+
+  if (fallbackSymbol && tokensVolumeUsd > 0) {
+    return [{ symbol: String(fallbackSymbol).trim().toUpperCase(), volumeUsd: tokensVolumeUsd }]
+  }
+  return undefined
 }
 
 export async function parseTransactionsNdjson(
@@ -67,23 +124,28 @@ export async function parseTransactionsNdjson(
     }
 
     const type = data.type
-    if (type !== 'SWAP' && type !== 'CROSS_SWAP') return
+    const status = data?.status
+    if (status && !COMPLETED_STATUSES.has(String(status))) return
     if (hasExcludedToken(data)) return
-    const feeRaw = data?.collectedFee?.amountIn?.usd
-    const feeUsd = Number(feeRaw)
-    if (!feeUsd || Number.isNaN(feeUsd) || feeUsd <= 0) return
-
-    const receivedUsd = Number(data?.receivedAmount?.amountIn?.usd)
-    const sentUsd = Number(data?.sentAmount?.amountIn?.usd)
-    const volumeUsd = receivedUsd && !Number.isNaN(receivedUsd) ? receivedUsd : sentUsd
-    if (!volumeUsd || Number.isNaN(volumeUsd)) {
+    const baseVolumeUsd = pickUsd([
+      data?.receivedAmount?.amountIn?.usd,
+      data?.sentAmount?.amountIn?.usd,
+      data?.sentFiatAmount?.amountIn?.usd,
+      data?.receivedFiatAmount?.amountIn?.usd,
+    ])
+    const tokensVolumeUsd = sumTokenUsd(data?.tokens)
+    const volumeUsd = baseVolumeUsd || tokensVolumeUsd
+    if (!volumeUsd) {
       pushError(`Line ${lines}: missing volume usd.`)
       return
     }
 
-    const sentBy = data?.sentBy
-    if (!sentBy) {
-      pushError(`Line ${lines}: missing sentBy wallet.`)
+    const feeUsd = pickUsd([data?.collectedFee?.amountIn?.usd])
+    const tokens = extractTokens(data, volumeUsd, type)
+
+    const wallet = data?.sentBy ?? data?.receivedBy ?? data?.wallet ?? data?.owner ?? data?.user
+    if (!wallet) {
+      pushError(`Line ${lines}: missing wallet.`)
       return
     }
 
@@ -98,10 +160,12 @@ export async function parseTransactionsNdjson(
 
     revenueTxCount += 1
     onRevenueTx({
-      wallet: normalizeWallet(String(sentBy)),
+      wallet: normalizeWallet(String(wallet)),
       createdAt,
       feeUsd,
       volumeUsd,
+      category: typeof type === 'string' && type.trim() ? type.trim() : 'Unknown',
+      tokens,
       hash,
     })
   }
