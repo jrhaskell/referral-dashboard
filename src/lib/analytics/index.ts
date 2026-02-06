@@ -850,7 +850,7 @@ export function getVolumeCategoryDailySeries(
     format(day, 'yyyy-MM-dd'),
   )
 
-  const data = days.map((date) => ({ date, total: 0 }))
+  const data = days.map((date) => ({ date, total: 0 } as Record<string, number | string>))
   const rowByDate = new Map(data.map((row) => [row.date as string, row]))
   const totalsByCategory = new Map<string, number>()
 

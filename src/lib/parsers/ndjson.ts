@@ -69,7 +69,7 @@ function extractTokens(data: Record<string, any>, tokensVolumeUsd: number, type:
         if (!symbol || !Number.isFinite(volumeUsd) || volumeUsd <= 0) return null
         return { symbol: String(symbol).trim().toUpperCase(), volumeUsd }
       })
-      .filter(Boolean)
+      .filter((token): token is { symbol: string; volumeUsd: number } => Boolean(token))
     return list.length ? list : undefined
   }
 
