@@ -59,6 +59,11 @@ export type TokenCategoryAgg = {
   txCount: number
 }
 
+export type SwapFlowAgg = {
+  volumeUsd: number
+  txCount: number
+}
+
 export type UserAgg = {
   wallet: string
   referral: string
@@ -89,6 +94,8 @@ export type ReferralIndex = {
   tokenVolumeBySymbol: Map<string, TokenVolumeAgg>
   tokenVolumeBySymbolDaily: Map<string, Map<string, TokenVolumeAgg>>
   tokenCategoryBySymbolDaily: Map<string, Map<string, Map<string, TokenCategoryAgg>>>
+  swapFlowByPair: Map<string, SwapFlowAgg>
+  swapFlowByPairDaily: Map<string, Map<string, SwapFlowAgg>>
   users: Map<string, UserAgg>
   topRevenueTxs: RevenueTxLite[]
   feeUsdTotal: number
@@ -189,6 +196,8 @@ export type SerializedReferral = {
     symbol: string
     daily: Array<{ date: string; categories: Array<[string, TokenCategoryAgg]> }>
   }>
+  swapFlowByPair: Array<[string, SwapFlowAgg]>
+  swapFlowByPairDaily: Array<{ pair: string; daily: Array<[string, SwapFlowAgg]> }>
   users: UserAgg[]
   topRevenueTxs: RevenueTxLite[]
   feeUsdTotal: number
@@ -226,6 +235,8 @@ function createReferralIndex(code: string): ReferralIndex {
     tokenVolumeBySymbol: new Map(),
     tokenVolumeBySymbolDaily: new Map(),
     tokenCategoryBySymbolDaily: new Map(),
+    swapFlowByPair: new Map(),
+    swapFlowByPairDaily: new Map(),
     users: new Map(),
     topRevenueTxs: [],
     feeUsdTotal: 0,
@@ -350,6 +361,24 @@ function ensureTokenCategoryDaily(
   return created
 }
 
+function ensureSwapFlow(referral: ReferralIndex, pair: string) {
+  const existing = referral.swapFlowByPair.get(pair)
+  if (existing) return existing
+  const created = { volumeUsd: 0, txCount: 0 }
+  referral.swapFlowByPair.set(pair, created)
+  return created
+}
+
+function ensureSwapFlowDaily(referral: ReferralIndex, pair: string, date: string) {
+  const pairMap = referral.swapFlowByPairDaily.get(pair) ?? new Map<string, SwapFlowAgg>()
+  const existing = pairMap.get(date)
+  if (existing) return existing
+  const created = { volumeUsd: 0, txCount: 0 }
+  pairMap.set(date, created)
+  referral.swapFlowByPairDaily.set(pair, pairMap)
+  return created
+}
+
 function ensureCustomerDaily(index: AnalyticsIndex, customerId: string, date: string) {
   const map = index.customerUsageDaily.get(customerId) ?? new Map<string, DailyAgg>()
   const existing = map.get(date)
@@ -442,6 +471,7 @@ export type ParsedRevenueTx = {
   volumeUsd: number
   category: string
   tokens?: Array<{ symbol: string; volumeUsd: number }>
+  swapFlow?: { fromSymbol: string; toSymbol: string; volumeUsd: number }
   hash?: string
 }
 
@@ -543,6 +573,23 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
       globalTokenCategoryDaily.volumeUsd += token.volumeUsd
       globalTokenCategoryDaily.txCount += 1
     })
+  }
+
+  if (tx.swapFlow?.fromSymbol && tx.swapFlow?.toSymbol && tx.swapFlow.volumeUsd > 0) {
+    const pairKey = `${tx.swapFlow.fromSymbol}→${tx.swapFlow.toSymbol}`
+    const pairAgg = ensureSwapFlow(referral, pairKey)
+    pairAgg.volumeUsd += tx.swapFlow.volumeUsd
+    pairAgg.txCount += 1
+    const pairDaily = ensureSwapFlowDaily(referral, pairKey, dateKey)
+    pairDaily.volumeUsd += tx.swapFlow.volumeUsd
+    pairDaily.txCount += 1
+
+    const globalPairAgg = ensureSwapFlow(index.global, pairKey)
+    globalPairAgg.volumeUsd += tx.swapFlow.volumeUsd
+    globalPairAgg.txCount += 1
+    const globalPairDaily = ensureSwapFlowDaily(index.global, pairKey, dateKey)
+    globalPairDaily.volumeUsd += tx.swapFlow.volumeUsd
+    globalPairDaily.txCount += 1
   }
 
   const customerDaily = ensureCustomerDaily(index, customer.id, dateKey)
@@ -746,6 +793,18 @@ export type TokenTransactionSummary = {
   categories: Array<{ category: string; txCount: number; volumeUsd: number }>
 }
 
+export type SwapFlowLink = {
+  source: string
+  target: string
+  volumeUsd: number
+  txCount: number
+}
+
+export type SwapSankeyData = {
+  nodes: Array<{ name: string }>
+  links: Array<{ source: number; target: number; value: number; txCount: number }>
+}
+
 export function getVolumeCategoryBreakdown(index: AnalyticsIndex, code: string, range: DateRange) {
   const referral = code === 'all' ? index.global : getReferral(index, code)
   const totals = new Map<string, VolumeCategoryAgg>()
@@ -882,6 +941,70 @@ export function getTopTokenTransactions(
   return sorted.slice(0, limit)
 }
 
+export function getSwapFlowLinks(index: AnalyticsIndex, code: string, range: DateRange, limit = 20) {
+  const referral = code === 'all' ? index.global : getReferral(index, code)
+  const totals = new Map<string, SwapFlowAgg>()
+  referral.swapFlowByPairDaily.forEach((dailyMap, pair) => {
+    let volumeUsd = 0
+    let txCount = 0
+    dailyMap.forEach((value, date) => {
+      if (!isDateInRange(date, range)) return
+      volumeUsd += value.volumeUsd
+      txCount += value.txCount
+    })
+    if (volumeUsd > 0) totals.set(pair, { volumeUsd, txCount })
+  })
+
+  return Array.from(totals.entries())
+    .map(([pair, value]) => {
+      const [source, target] = pair.split('→')
+      return { source, target, volumeUsd: value.volumeUsd, txCount: value.txCount }
+    })
+    .filter((entry) => entry.source && entry.target)
+    .sort((a, b) => b.volumeUsd - a.volumeUsd || b.txCount - a.txCount)
+    .slice(0, limit)
+}
+
+export function getSwapFlowSankeyData(
+  index: AnalyticsIndex,
+  code: string,
+  range: DateRange,
+  limit = 24,
+): SwapSankeyData {
+  const links = getSwapFlowLinks(index, code, range, limit)
+  const nodeWeights = new Map<string, number>()
+  const nodeOrder = new Set<string>()
+
+  links.forEach((link) => {
+    const source = `${link.source} (out)`
+    const target = `${link.target} (in)`
+    nodeWeights.set(source, (nodeWeights.get(source) ?? 0) + link.volumeUsd)
+    nodeWeights.set(target, (nodeWeights.get(target) ?? 0) + link.volumeUsd)
+    nodeOrder.add(source)
+    nodeOrder.add(target)
+  })
+
+  const orderedNodes = Array.from(nodeOrder)
+    .sort((a, b) => (nodeWeights.get(b) ?? 0) - (nodeWeights.get(a) ?? 0))
+    .map((name) => ({ name }))
+
+  const nodeIndex = new Map<string, number>()
+  orderedNodes.forEach((node, index) => nodeIndex.set(node.name, index))
+
+  const sankeyLinks = links.map((link) => {
+    const source = `${link.source} (out)`
+    const target = `${link.target} (in)`
+    return {
+      source: nodeIndex.get(source) ?? 0,
+      target: nodeIndex.get(target) ?? 0,
+      value: link.volumeUsd,
+      txCount: link.txCount,
+    }
+  })
+
+  return { nodes: orderedNodes, links: sankeyLinks }
+}
+
 export function getReferralList(index: AnalyticsIndex) {
   return Array.from(index.referrals.keys()).sort()
 }
@@ -926,6 +1049,11 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
           })),
         }),
       ),
+      swapFlowByPair: Array.from(index.global.swapFlowByPair.entries()),
+      swapFlowByPairDaily: Array.from(index.global.swapFlowByPairDaily.entries()).map(([pair, daily]) => ({
+        pair,
+        daily: Array.from(daily.entries()),
+      })),
       users: Array.from(index.global.users.values()),
       topRevenueTxs: index.global.topRevenueTxs,
       feeUsdTotal: index.global.feeUsdTotal,
@@ -966,6 +1094,11 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
           })),
         }),
       ),
+      swapFlowByPair: Array.from(referral.swapFlowByPair.entries()),
+      swapFlowByPairDaily: Array.from(referral.swapFlowByPairDaily.entries()).map(([pair, daily]) => ({
+        pair,
+        daily: Array.from(daily.entries()),
+      })),
       users: Array.from(referral.users.values()),
       topRevenueTxs: referral.topRevenueTxs,
       feeUsdTotal: referral.feeUsdTotal,
@@ -1021,6 +1154,10 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
     })
     global.tokenCategoryBySymbolDaily.set(entry.symbol, dateMap)
   })
+  snapshot.global.swapFlowByPair?.forEach(([pair, value]) => global.swapFlowByPair.set(pair, value))
+  snapshot.global.swapFlowByPairDaily?.forEach((entry) =>
+    global.swapFlowByPairDaily.set(entry.pair, new Map(entry.daily)),
+  )
   snapshot.global.users.forEach((user) => global.users.set(user.wallet, user))
   global.topRevenueTxs = snapshot.global.topRevenueTxs
   global.feeUsdTotal = snapshot.global.feeUsdTotal
@@ -1055,6 +1192,10 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
       })
       created.tokenCategoryBySymbolDaily.set(entry.symbol, dateMap)
     })
+    referral.swapFlowByPair?.forEach(([pair, value]) => created.swapFlowByPair.set(pair, value))
+    referral.swapFlowByPairDaily?.forEach((entry) =>
+      created.swapFlowByPairDaily.set(entry.pair, new Map(entry.daily)),
+    )
     referral.users.forEach((user) => created.users.set(user.wallet, user))
     referral.users.forEach((user) => index.usersByWallet.set(user.wallet, user))
     created.topRevenueTxs = referral.topRevenueTxs

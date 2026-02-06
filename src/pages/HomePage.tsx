@@ -18,6 +18,7 @@ import { DataTable } from '@/components/DataTable'
 import { DateRangePicker } from '@/components/DateRangePicker'
 import { DebugPanel } from '@/components/DebugPanel'
 import { KpiCard } from '@/components/KpiCard'
+import { SwapSankey } from '@/components/SwapSankey'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -27,6 +28,8 @@ import {
   getRangeBounds,
   getReferralList,
   getReferralMetrics,
+  getSwapFlowSankeyData,
+  getTopTokenTransactions,
   serializeIndex,
   type ReferralMetrics,
   type ReferralIndex,
@@ -85,6 +88,71 @@ export function HomePage() {
 
   const globalMetrics = getReferralMetrics(index, 'all', range)
   const dailySeries = getDailySeries(index, 'all', range)
+  const swapSankey = React.useMemo(
+    () => getSwapFlowSankeyData(index, 'all', range, 24),
+    [index, range],
+  )
+  const topTokenTransactions = React.useMemo(
+    () => getTopTokenTransactions(index, 'all', range, 10),
+    [index, range],
+  )
+  const [selectedTxTypes, setSelectedTxTypes] = React.useState<Set<string>>(() => new Set())
+  const [hasInitializedTxTypes, setHasInitializedTxTypes] = React.useState(false)
+  const tokenTypeTotals = React.useMemo(() => {
+    const totals = new Map<string, number>()
+    topTokenTransactions.forEach((entry) => {
+      entry.categories.forEach((category) => {
+        totals.set(category.category, (totals.get(category.category) ?? 0) + category.txCount)
+      })
+    })
+    return totals
+  }, [topTokenTransactions])
+
+  const topTokenTypeSummary = React.useMemo(
+    () => Array.from(tokenTypeTotals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8),
+    [tokenTypeTotals],
+  )
+
+  const tokenTypeTotal = React.useMemo(() => {
+    let total = 0
+    tokenTypeTotals.forEach((value) => {
+      total += value
+    })
+    return total
+  }, [tokenTypeTotals])
+
+  React.useEffect(() => {
+    if (!hasInitializedTxTypes && topTokenTypeSummary.length) {
+      setSelectedTxTypes(new Set(topTokenTypeSummary.map(([category]) => category)))
+      setHasInitializedTxTypes(true)
+    }
+  }, [hasInitializedTxTypes, topTokenTypeSummary])
+
+  const filteredTopTokens = React.useMemo(() => {
+    if (!selectedTxTypes.size) return []
+    return topTokenTransactions
+      .map((entry) => {
+        const categories = entry.categories.filter((category) => selectedTxTypes.has(category.category))
+        if (!categories.length) return null
+        const txCount = categories.reduce((sum, category) => sum + category.txCount, 0)
+        const volumeUsd = categories.reduce((sum, category) => sum + category.volumeUsd, 0)
+        return { ...entry, categories, txCount, volumeUsd }
+      })
+      .filter((entry): entry is (typeof topTokenTransactions)[number] => Boolean(entry))
+      .sort((a, b) => b.volumeUsd - a.volumeUsd || b.txCount - a.txCount)
+  }, [topTokenTransactions, selectedTxTypes])
+
+  const handleToggleTxType = (category: string) => {
+    setSelectedTxTypes((prev) => {
+      const next = new Set(prev)
+      if (next.has(category)) {
+        next.delete(category)
+      } else {
+        next.add(category)
+      }
+      return next
+    })
+  }
 
   const [compareSelection, setCompareSelection] = React.useState<string[]>([])
   const [signupsTopN, setSignupsTopN] = React.useState(8)
@@ -376,6 +444,127 @@ export function HomePage() {
         />
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Top tokens by transactions</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {filteredTopTokens.length ? (
+            <div className="space-y-2">
+              {topTokenTypeSummary.length ? (
+                <div className="flex flex-wrap gap-2 text-[11px]">
+                  {topTokenTypeSummary.map(([category]) => {
+                    const isSelected = selectedTxTypes.has(category)
+                    const share = tokenTypeTotal ? (tokenTypeTotals.get(category) ?? 0) / tokenTypeTotal : 0
+                    return (
+                      <Button
+                        key={category}
+                        size="sm"
+                        variant={isSelected ? 'secondary' : 'outline'}
+                        onClick={() => handleToggleTxType(category)}
+                        className="h-7 gap-2"
+                      >
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: getTransactionTypeColor(category) }}
+                        />
+                        <span>{formatTransactionType(category)}</span>
+                        <span className="text-muted-foreground">{formatPercent(share)}</span>
+                      </Button>
+                    )
+                  })}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7"
+                    onClick={() => {
+                      setSelectedTxTypes(new Set(topTokenTypeSummary.map(([category]) => category)))
+                      setHasInitializedTxTypes(true)
+                    }}
+                  >
+                    All
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7"
+                    onClick={() => {
+                      setSelectedTxTypes(new Set())
+                      setHasInitializedTxTypes(true)
+                    }}
+                  >
+                    None
+                  </Button>
+                </div>
+              ) : null}
+              <div className="grid grid-cols-[minmax(0,1fr)_120px_100px] text-xs font-medium text-muted-foreground">
+                <span>Token</span>
+                <span className="text-right">Tx count</span>
+                <span className="text-right">Volume USD</span>
+              </div>
+              <div className="space-y-2">
+                {filteredTopTokens.map((entry) => (
+                  <div key={entry.symbol} className="space-y-1">
+                    <div className="grid grid-cols-[minmax(0,1fr)_120px_100px] items-center text-xs">
+                      <span className="truncate font-medium">{entry.symbol}</span>
+                      <span className="text-right">{formatNumber(entry.txCount)}</span>
+                      <span className="text-right">{formatUsd(entry.volumeUsd)}</span>
+                    </div>
+                    {entry.categories.length ? (
+                      <div className="flex h-4.5 w-full overflow-hidden rounded-full bg-muted">
+                        {(() => {
+                          const primary = entry.categories.slice(0, 5)
+                          const remainder = entry.categories.slice(5)
+                          const remainderCount = remainder.reduce((sum, item) => sum + item.txCount, 0)
+                          const segments = remainderCount
+                            ? [...primary, { category: 'Other types', txCount: remainderCount, volumeUsd: 0 }]
+                            : primary
+
+                          return segments
+                            .filter((segment) => segment.txCount > 0)
+                            .map((segment) => {
+                              const percent = entry.txCount ? segment.txCount / entry.txCount : 0
+                              return (
+                                <div
+                                  key={`${entry.symbol}-${segment.category}`}
+                                  className="flex items-center justify-center text-[9px] font-semibold text-white"
+                                  style={{
+                                    width: `${Math.max(0, Math.min(1, percent)) * 100}%`,
+                                    backgroundColor:
+                                      segment.category === 'Other types'
+                                        ? '#94a3b8'
+                                        : getTransactionTypeColor(segment.category),
+                                  }}
+                                  title={`${formatTransactionType(segment.category)} ${formatPercent(percent)}`}
+                                >
+                                  {percent >= 0.12 ? formatPercent(percent) : ''}
+                                </div>
+                              )
+                            })
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">—</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No token data in this range.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Swap flow (USD)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SwapSankey data={swapSankey} height={420} />
+        </CardContent>
+      </Card>
+
       <Tabs defaultValue="revenue" className="space-y-4">
         <TabsList>
           <TabsTrigger value="revenue">Revenue</TabsTrigger>
@@ -429,4 +618,34 @@ function buildLast30Range(endDate: string, min: string, max: string): DateRange 
     start: startValue < min ? min : startValue,
     end: endValue,
   }
+}
+
+const transactionTypeColors = ['#0ea5e9', '#22c55e', '#f97316', '#6366f1', '#e11d48', '#14b8a6', '#f59e0b']
+const transactionTypeColorMap: Record<string, string> = {
+  SWAP: '#0ea5e9',
+  CROSS_SWAP: '#38bdf8',
+  CRYPTO_DEPOSIT: '#22c55e',
+  CRYPTO_WITHDRAW: '#16a34a',
+  ON_RAMP: '#f97316',
+  OFF_RAMP: '#f59e0b',
+  LIQUIDITY_POOL_ADD: '#6366f1',
+  LIQUIDITY_POOL_WITHDRAW: '#8b5cf6',
+  LIQUIDITY_POOL_COLLECT_FEE: '#e11d48',
+}
+
+function formatTransactionType(label: string) {
+  return label
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+function getTransactionTypeColor(label: string) {
+  const key = label.trim().toUpperCase()
+  if (transactionTypeColorMap[key]) return transactionTypeColorMap[key]
+  let hash = 0
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) % 997
+  }
+  return transactionTypeColors[hash % transactionTypeColors.length]
 }

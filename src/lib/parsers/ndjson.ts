@@ -96,6 +96,39 @@ function extractTokens(data: Record<string, any>, tokensVolumeUsd: number, type:
   return undefined
 }
 
+function extractSwapFlow(data: Record<string, any>, type: unknown) {
+  const normalizedType = typeof type === 'string' ? type.trim().toUpperCase() : ''
+  if (normalizedType !== 'SWAP' && normalizedType !== 'CROSS_SWAP') return undefined
+
+  const fromSymbol =
+    data?.sentAmount?.token?.symbol ??
+    data?.sentAmount?.cryptoCurrency?.symbol ??
+    data?.sentCryptoCurrency?.symbol ??
+    data?.sentAmount?.token?.name ??
+    data?.sentAmount?.cryptoCurrency?.name
+
+  const toSymbol =
+    data?.receivedAmount?.token?.symbol ??
+    data?.receivedAmount?.cryptoCurrency?.symbol ??
+    data?.receivedCryptoCurrency?.symbol ??
+    data?.receivedAmount?.token?.name ??
+    data?.receivedAmount?.cryptoCurrency?.name
+
+  if (!fromSymbol || !toSymbol) return undefined
+  const volumeUsd = pickUsd([
+    data?.sentAmount?.amountIn?.usd,
+    data?.receivedAmount?.amountIn?.usd,
+    data?.sentFiatAmount?.amountIn?.usd,
+    data?.receivedFiatAmount?.amountIn?.usd,
+  ])
+  if (!volumeUsd) return undefined
+
+  const from = String(fromSymbol).trim().toUpperCase()
+  const to = String(toSymbol).trim().toUpperCase()
+  if (!from || !to || from === to) return undefined
+  return { fromSymbol: from, toSymbol: to, volumeUsd }
+}
+
 export async function parseTransactionsNdjson(
   file: File,
   onRevenueTx: (tx: ParsedRevenueTx) => void,
@@ -142,6 +175,7 @@ export async function parseTransactionsNdjson(
 
     const feeUsd = pickUsd([data?.collectedFee?.amountIn?.usd])
     const tokens = extractTokens(data, volumeUsd, type)
+    const swapFlow = extractSwapFlow(data, type)
 
     const wallet = data?.sentBy ?? data?.receivedBy ?? data?.wallet ?? data?.owner ?? data?.user
     if (!wallet) {
@@ -166,6 +200,7 @@ export async function parseTransactionsNdjson(
       volumeUsd,
       category: typeof type === 'string' && type.trim() ? type.trim() : 'Unknown',
       tokens,
+      swapFlow,
       hash,
     })
   }

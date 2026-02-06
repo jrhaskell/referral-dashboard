@@ -23,6 +23,7 @@ import { DateRangePicker } from '@/components/DateRangePicker'
 import { DebugPanel } from '@/components/DebugPanel'
 import { GroupSummaryCard } from '@/components/GroupSummaryCard'
 import { KpiCard } from '@/components/KpiCard'
+import { SwapSankey } from '@/components/SwapSankey'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -32,6 +33,7 @@ import {
   getFeeCategoryBreakdown,
   getRangeBounds,
   getReferralMetrics,
+  getSwapFlowSankeyData,
   getTopTokenTransactions,
   getVolumeCategoryBreakdown,
   getVolumeCategoryDailySeries,
@@ -97,23 +99,38 @@ export function ReferralDetailPage() {
     () => getVolumeCategoryDailySeries(index, code, dateRange),
     [index, code, dateRange],
   )
+  const swapSankey = React.useMemo(
+    () => getSwapFlowSankeyData(index, code, dateRange, 24),
+    [index, code, dateRange],
+  )
   const topTokenTransactions = React.useMemo(
     () => getTopTokenTransactions(index, code, dateRange, 10),
     [index, code, dateRange],
   )
   const [selectedTxTypes, setSelectedTxTypes] = React.useState<Set<string>>(() => new Set())
   const [hasInitializedTxTypes, setHasInitializedTxTypes] = React.useState(false)
-  const topTokenTypeSummary = React.useMemo(() => {
+  const tokenTypeTotals = React.useMemo(() => {
     const totals = new Map<string, number>()
     topTokenTransactions.forEach((entry) => {
       entry.categories.forEach((category) => {
         totals.set(category.category, (totals.get(category.category) ?? 0) + category.txCount)
       })
     })
-    return Array.from(totals.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
+    return totals
   }, [topTokenTransactions])
+
+  const topTokenTypeSummary = React.useMemo(
+    () => Array.from(tokenTypeTotals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8),
+    [tokenTypeTotals],
+  )
+
+  const tokenTypeTotal = React.useMemo(() => {
+    let total = 0
+    tokenTypeTotals.forEach((value) => {
+      total += value
+    })
+    return total
+  }, [tokenTypeTotals])
 
   React.useEffect(() => {
     if (!hasInitializedTxTypes && topTokenTypeSummary.length) {
@@ -675,6 +692,7 @@ export function ReferralDetailPage() {
                 <div className="flex flex-wrap gap-2 text-[11px]">
                   {topTokenTypeSummary.map(([category]) => {
                     const isSelected = selectedTxTypes.has(category)
+                    const share = tokenTypeTotal ? (tokenTypeTotals.get(category) ?? 0) / tokenTypeTotal : 0
                     return (
                       <Button
                         key={category}
@@ -688,6 +706,7 @@ export function ReferralDetailPage() {
                           style={{ backgroundColor: getTransactionTypeColor(category) }}
                         />
                         <span>{formatTransactionType(category)}</span>
+                        <span className="text-muted-foreground">{formatPercent(share)}</span>
                       </Button>
                     )
                   })}
@@ -771,6 +790,15 @@ export function ReferralDetailPage() {
           ) : (
             <p className="text-xs text-muted-foreground">No token data in this range.</p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Swap flow (USD)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SwapSankey data={swapSankey} height={420} />
         </CardContent>
       </Card>
 
