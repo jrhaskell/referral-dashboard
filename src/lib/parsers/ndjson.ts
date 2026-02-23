@@ -13,12 +13,13 @@ export type NdjsonProgress = {
 }
 
 const EXCLUDED_TOKENS = new Set(['uxlink'])
+const MAX_USD = 1e18
 const COMPLETED_STATUSES = new Set(['COMPLETED', 'SUCCESS'])
 
 function pickUsd(candidates: Array<unknown>) {
   for (const candidate of candidates) {
     const value = Number(candidate)
-    if (Number.isFinite(value) && value > 0) return value
+    if (Number.isFinite(value) && value > 0 && value <= MAX_USD) return value
   }
   return 0
 }
@@ -53,7 +54,7 @@ function sumTokenUsd(tokens: unknown) {
   let total = 0
   tokens.forEach((token) => {
     const value = Number((token as any)?.amountIn?.usd)
-    if (Number.isFinite(value) && value > 0) total += value
+    if (Number.isFinite(value) && value > 0 && value <= MAX_USD) total += value
   })
   return total
 }
@@ -66,7 +67,7 @@ function extractTokens(data: Record<string, any>, tokensVolumeUsd: number, type:
         const symbol =
           token?.token?.symbol ?? token?.cryptoCurrency?.symbol ?? token?.token?.name ?? token?.cryptoCurrency?.name
         const volumeUsd = Number(token?.amountIn?.usd)
-        if (!symbol || !Number.isFinite(volumeUsd) || volumeUsd <= 0) return null
+        if (!symbol || !Number.isFinite(volumeUsd) || volumeUsd <= 0 || volumeUsd > MAX_USD) return null
         return { symbol: String(symbol).trim().toUpperCase(), volumeUsd }
       })
       .filter((token): token is { symbol: string; volumeUsd: number } => Boolean(token))

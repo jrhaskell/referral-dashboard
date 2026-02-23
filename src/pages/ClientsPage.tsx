@@ -20,9 +20,14 @@ type CustomerRow = {
   signupDate: string
   referralUsed: string
   codesOwned: number
+  ownedCodes: string
   hasReferralCode: boolean
+  codeUses: number
+  codeMaxUses: number | null
+  realConversion: number
   feeUsd: number
   volumeUsd: number
+  aumUsd: number
   lastRevenueDate?: string
 }
 
@@ -68,25 +73,38 @@ export function ClientsPage() {
   const [query, setQuery] = React.useState('')
   const [onlyWithFee, setOnlyWithFee] = React.useState(true)
   const [onlyWithoutCode, setOnlyWithoutCode] = React.useState(true)
+  const [aumMin, setAumMin] = React.useState('')
+  const [aumMax, setAumMax] = React.useState('')
 
   const codesByOwner = React.useMemo(() => buildCodesByOwner(index), [index])
+  const usesByCode = React.useMemo(() => buildUsesByCode(index), [index])
+  const maxUsesByCode = React.useMemo(() => buildMaxUsesByCode(index), [index])
+  const realConversionByCode = React.useMemo(
+    () => buildRealConversionByCode(index, range),
+    [index, range],
+  )
 
   const rows = React.useMemo(
-    () => buildCustomerRows(index, range, codesByOwner),
-    [index, range, codesByOwner],
+    () =>
+      buildCustomerRows(index, range, codesByOwner, usesByCode, maxUsesByCode, realConversionByCode),
+    [index, range, codesByOwner, usesByCode, maxUsesByCode, realConversionByCode],
   )
 
   const filteredRows = React.useMemo(() => {
     const normalized = query.trim().toLowerCase()
+    const minAum = Number(aumMin)
+    const maxAum = Number(aumMax)
     return rows.filter((row) => {
       if (onlyWithFee && row.feeUsd <= FEE_THRESHOLD) return false
       if (onlyWithoutCode && row.hasReferralCode) return false
+      if (Number.isFinite(minAum) && aumMin !== '' && row.aumUsd < minAum) return false
+      if (Number.isFinite(maxAum) && aumMax !== '' && row.aumUsd > maxAum) return false
 
       if (!normalized) return true
       const haystack = [row.label, row.id, row.referralUsed].join(' ').toLowerCase()
       return haystack.includes(normalized)
     })
-  }, [rows, query, onlyWithFee, onlyWithoutCode])
+  }, [rows, query, onlyWithFee, onlyWithoutCode, aumMin, aumMax])
 
   const totals = React.useMemo(() => {
     const feeCustomers = filteredRows.filter((row) => row.feeUsd > 0).length
@@ -95,14 +113,15 @@ export function ClientsPage() {
       (row) => row.feeUsd > 0 && !row.hasReferralCode,
     ).length
     const totalFee = filteredRows.reduce((sum, row) => sum + row.feeUsd, 0)
-    return { feeCustomers, withoutCode, feeWithoutCode, totalFee }
+    const codesCreated = filteredRows.reduce((sum, row) => sum + row.codesOwned, 0)
+    return { feeCustomers, withoutCode, feeWithoutCode, totalFee, codesCreated }
   }, [filteredRows])
 
-  const referralVolumeSeries = React.useMemo(() => {
+  const referralAumSeries = React.useMemo(() => {
     const totalsByReferral = new Map<string, number>()
     filteredRows.forEach((row) => {
       const key = row.referralUsed?.trim() ? row.referralUsed.trim() : 'No referral'
-      totalsByReferral.set(key, (totalsByReferral.get(key) ?? 0) + row.volumeUsd)
+      totalsByReferral.set(key, (totalsByReferral.get(key) ?? 0) + row.aumUsd)
     })
     const entries = Array.from(totalsByReferral.entries()).map(([name, value]) => ({ name, value }))
     entries.sort((a, b) => b.value - a.value)
@@ -138,9 +157,12 @@ export function ClientsPage() {
       'Label',
       'Registered',
       'Referral Used',
-      'Has Referral Code',
-      'Codes Owned',
+      'Referral Code(s)',
+      'Code Uses',
+      'Max Uses',
+      'Real Conversion',
       'Fee USD',
+      'AUM USD',
       'Volume USD',
       'Last Revenue Date',
     ])
@@ -151,9 +173,12 @@ export function ClientsPage() {
           row.label,
           row.signupDate,
           row.referralUsed,
-          row.hasReferralCode ? 'yes' : 'no',
-          row.codesOwned,
+          row.ownedCodes || 'No',
+          row.codeUses,
+          row.codeMaxUses ?? '',
+          row.realConversion,
           row.feeUsd,
+          row.aumUsd,
           row.volumeUsd,
           row.lastRevenueDate ?? '',
         ]),
@@ -180,25 +205,40 @@ export function ClientsPage() {
       cell: ({ row }: { row: { original: CustomerRow } }) => row.original.referralUsed || '—',
     },
     {
+      accessorKey: 'ownedCodes',
+      header: 'Referral code',
+      cell: ({ row }: { row: { original: CustomerRow } }) => row.original.ownedCodes || 'No',
+    },
+    {
+      accessorKey: 'codeUses',
+      header: 'Code uses',
+      cell: ({ row }: { row: { original: CustomerRow } }) => formatNumber(row.original.codeUses),
+    },
+    {
+      accessorKey: 'codeMaxUses',
+      header: 'Max uses',
+      cell: ({ row }: { row: { original: CustomerRow } }) =>
+        row.original.codeMaxUses === null ? '—' : formatNumber(row.original.codeMaxUses),
+    },
+    {
+      accessorKey: 'realConversion',
+      header: 'Real conversion',
+      cell: ({ row }: { row: { original: CustomerRow } }) => formatNumber(row.original.realConversion),
+    },
+    {
       accessorKey: 'feeUsd',
       header: 'Fee USD',
       cell: ({ row }: { row: { original: CustomerRow } }) => formatUsd(row.original.feeUsd),
     },
     {
+      accessorKey: 'aumUsd',
+      header: 'AUM USD',
+      cell: ({ row }: { row: { original: CustomerRow } }) => formatUsd(row.original.aumUsd),
+    },
+    {
       accessorKey: 'volumeUsd',
       header: 'Volume USD',
       cell: ({ row }: { row: { original: CustomerRow } }) => formatUsd(row.original.volumeUsd),
-    },
-    {
-      accessorKey: 'codesOwned',
-      header: 'Codes owned',
-      cell: ({ row }: { row: { original: CustomerRow } }) => formatNumber(row.original.codesOwned),
-    },
-    {
-      accessorKey: 'hasReferralCode',
-      header: 'Has referral code',
-      cell: ({ row }: { row: { original: CustomerRow } }) =>
-        row.original.hasReferralCode ? 'Yes' : 'No',
     },
     {
       accessorKey: 'signupDate',
@@ -228,24 +268,44 @@ export function ClientsPage() {
         <KpiCard title="Fee without code" value={formatNumber(totals.feeWithoutCode)} />
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Filtered summary</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <p className="text-xs text-muted-foreground">Total clients (filtered)</p>
+            <p className="text-2xl font-semibold">{formatNumber(filteredRows.length)}</p>
+          </div>
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <p className="text-xs text-muted-foreground">Codes created (filtered)</p>
+            <p className="text-2xl font-semibold">{formatNumber(totals.codesCreated)}</p>
+          </div>
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <p className="text-xs text-muted-foreground">Total fee (filtered)</p>
+            <p className="text-2xl font-semibold">{formatUsd(totals.totalFee)}</p>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Volume by referral used</CardTitle>
+            <CardTitle>AUM by referral used</CardTitle>
           </CardHeader>
           <CardContent className="h-80">
-            {referralVolumeSeries.length ? (
+            {referralAumSeries.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={referralVolumeSeries}
+                    data={referralAumSeries}
                     dataKey="value"
                     nameKey="name"
                     innerRadius={60}
                     outerRadius={110}
                     paddingAngle={2}
                   >
-                    {referralVolumeSeries.map((entry, index) => (
+                    {referralAumSeries.map((entry, index) => (
                       <Cell key={entry.name} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                     ))}
                   </Pie>
@@ -257,7 +317,7 @@ export function ClientsPage() {
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <p className="text-sm text-muted-foreground">No referral volume data for this filter.</p>
+              <p className="text-sm text-muted-foreground">No referral AUM data for this filter.</p>
             )}
           </CardContent>
         </Card>
@@ -311,6 +371,20 @@ export function ClientsPage() {
               placeholder="Search client or referral"
               className="h-8 w-64"
             />
+            <Input
+              value={aumMin}
+              onChange={(event) => setAumMin(event.target.value)}
+              placeholder="AUM min"
+              className="h-8 w-28"
+              inputMode="decimal"
+            />
+            <Input
+              value={aumMax}
+              onChange={(event) => setAumMax(event.target.value)}
+              placeholder="AUM max"
+              className="h-8 w-28"
+              inputMode="decimal"
+            />
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Switch checked={onlyWithFee} onCheckedChange={(value) => setOnlyWithFee(Boolean(value))} />
               Fee &gt; {formatNumber(FEE_THRESHOLD)}
@@ -342,21 +416,83 @@ function buildCodesByOwner(index: AnalyticsIndex) {
   return map
 }
 
-function buildCustomerRows(index: AnalyticsIndex, range: DateRange, codesByOwner: Map<string, string[]>) {
+function buildUsesByCode(index: AnalyticsIndex) {
+  const map = new Map<string, number>()
+  index.referralCodes.forEach((meta) => {
+    map.set(meta.code, meta.uses)
+  })
+  return map
+}
+
+function buildMaxUsesByCode(index: AnalyticsIndex) {
+  const map = new Map<string, number | null>()
+  index.referralCodes.forEach((meta) => {
+    map.set(meta.code, meta.maxUses ?? null)
+  })
+  return map
+}
+
+function buildCustomerRows(
+  index: AnalyticsIndex,
+  range: DateRange,
+  codesByOwner: Map<string, string[]>,
+  usesByCode: Map<string, number>,
+  maxUsesByCode: Map<string, number | null>,
+  realConversionByCode: Map<string, number>,
+) {
   return Array.from(index.customersById.values()).map((customer) => {
     const usageDaily = index.customerUsageDaily.get(customer.id)
     const usage = summarizeUsageByRange(usageDaily, range)
     const codes = codesByOwner.get(customer.id) ?? []
+    const aumUsd = index.aumByWallet.get(customer.smartWallet) ?? 0
+    const ownedCodes = codes.join(', ')
+    const codeUses = codes.reduce((sum, code) => sum + (usesByCode.get(code) ?? 0), 0)
+    const maxUsesList = codes
+      .map((code) => maxUsesByCode.get(code))
+      .filter((value): value is number => typeof value === 'number')
+    const codeMaxUses = maxUsesList.length ? maxUsesList.reduce((sum, value) => sum + value, 0) : null
+    const realConversion = codes.reduce(
+      (sum, code) => sum + (realConversionByCode.get(code) ?? 0),
+      0,
+    )
     return {
       id: customer.id,
       label: customer.email || customer.id,
       signupDate: customer.signupDate,
       referralUsed: customer.referral,
       codesOwned: codes.length,
+      ownedCodes,
       hasReferralCode: codes.length > 0,
+      codeUses,
+      codeMaxUses,
+      realConversion,
       feeUsd: usage.feeUsd,
+      aumUsd,
       volumeUsd: usage.volumeUsd,
       lastRevenueDate: usage.lastDate,
     }
   })
+}
+
+function buildRealConversionByCode(index: AnalyticsIndex, range: DateRange) {
+  const totals = new Map<string, number>()
+  const startMs = new Date(range.start).getTime()
+  const endMs = new Date(range.end).getTime() + 86400000 - 1
+
+  index.customersById.forEach((customer) => {
+    const code = customer.referral
+    if (!code) return
+    const usage = index.customerUsageDaily.get(customer.id)
+    if (!usage) return
+    let feeUsd = 0
+    usage.forEach((value, date) => {
+      if (!isDateInRange(date, range)) return
+      feeUsd += value.feeUsd
+    })
+    if (feeUsd > 5) {
+      totals.set(code, (totals.get(code) ?? 0) + 1)
+    }
+  })
+
+  return totals
 }

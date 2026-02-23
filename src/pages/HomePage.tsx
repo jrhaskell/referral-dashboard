@@ -342,7 +342,46 @@ export function HomePage() {
     return columns
   }
 
-  const getSorted = (variant: 'revenue' | 'quality' | 'conversion' | 'kyc') => {
+  const aumColumns = () => [
+    {
+      accessorKey: 'code',
+      header: 'Referral',
+      cell: ({ row }: any) => (
+        <Link className="font-semibold text-primary" to={`/referral-detail/${row.original.code}`}>
+          {row.original.code}
+        </Link>
+      ),
+    },
+    {
+      accessorKey: 'aumUsd',
+      header: 'AUM USD',
+      cell: ({ row }: any) => formatUsd(row.original.aumUsd),
+    },
+    {
+      accessorKey: 'aumWallets',
+      header: 'AUM wallets',
+      cell: ({ row }: any) => formatNumber(row.original.aumWallets),
+    },
+    {
+      id: 'aumPerWallet',
+      header: 'Avg AUM / wallet',
+      accessorFn: (row: ReferralMetrics) => (row.aumWallets ? row.aumUsd / row.aumWallets : 0),
+      cell: ({ row }: any) =>
+        formatUsd(row.original.aumWallets ? row.original.aumUsd / row.original.aumWallets : 0),
+    },
+    {
+      accessorKey: 'feeUsd',
+      header: 'Fee USD',
+      cell: ({ row }: any) => formatUsd(row.original.feeUsd),
+    },
+    {
+      accessorKey: 'feePerAumDollar',
+      header: 'Fee / AUM',
+      cell: ({ row }: any) => formatPercent(row.original.feePerAumDollar),
+    },
+  ]
+
+  const getSorted = (variant: 'revenue' | 'quality' | 'conversion' | 'kyc' | 'aum') => {
     const rows = referralCodes.map((code) => metricsByCode[code])
     switch (variant) {
       case 'quality':
@@ -351,6 +390,8 @@ export function HomePage() {
         return rows.slice().sort((a, b) => b.conversionRate - a.conversionRate)
       case 'kyc':
         return rows.slice().sort((a, b) => b.kycRate - a.kycRate)
+      case 'aum':
+        return rows.slice().sort((a, b) => b.aumUsd - a.aumUsd)
       default:
         return rows.slice().sort((a, b) => b.feeUsd - a.feeUsd)
     }
@@ -367,16 +408,21 @@ export function HomePage() {
         />
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-5">
-        <KpiCard title="Signups" value={formatNumber(globalMetrics.signups)} />
-        <KpiCard title="KYC Users" value={formatNumber(globalMetrics.kycUsers)} />
-        <KpiCard
-          title="Users with revenue"
-          value={formatNumber(globalMetrics.usersWithRevenueTx)}
-        />
-        <KpiCard title="Volume USD" value={formatUsd(globalMetrics.volumeUsd)} />
-        <KpiCard title="Fee USD" value={formatUsd(globalMetrics.feeUsd)} />
-      </div>
+        <div className="grid gap-4 md:grid-cols-6">
+          <KpiCard title="Signups" value={formatNumber(globalMetrics.signups)} />
+          <KpiCard title="KYC Users" value={formatNumber(globalMetrics.kycUsers)} />
+          <KpiCard
+            title="Users with revenue"
+            value={formatNumber(globalMetrics.usersWithRevenueTx)}
+          />
+          <KpiCard title="Volume USD" value={formatUsd(globalMetrics.volumeUsd)} />
+          <KpiCard title="Fee USD" value={formatUsd(globalMetrics.feeUsd)} />
+          <KpiCard
+            title="Total AUM"
+            value={formatUsd(globalMetrics.aumUsd)}
+            helper={`${formatNumber(globalMetrics.aumWallets)} wallets`}
+          />
+        </div>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -571,6 +617,7 @@ export function HomePage() {
           <TabsTrigger value="quality">Quality</TabsTrigger>
           <TabsTrigger value="conversion">Conversion</TabsTrigger>
           <TabsTrigger value="kyc">KYC</TabsTrigger>
+          <TabsTrigger value="aum">AUM</TabsTrigger>
         </TabsList>
         <TabsContent value="revenue">
           <DataTable columns={leaderboardColumns('revenue')} data={getSorted('revenue')} />
@@ -583,6 +630,9 @@ export function HomePage() {
         </TabsContent>
         <TabsContent value="kyc">
           <DataTable columns={leaderboardColumns('kyc')} data={getSorted('kyc')} />
+        </TabsContent>
+        <TabsContent value="aum">
+          <DataTable columns={aumColumns()} data={getSorted('aum')} />
         </TabsContent>
       </Tabs>
 

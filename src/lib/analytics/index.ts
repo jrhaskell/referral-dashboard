@@ -23,6 +23,25 @@ export type Customer = {
   referral: string
 }
 
+export type AumSnapshot = {
+  snapshotDate?: string
+  timestamp?: string
+  totalUsd?: number
+  totalWallets?: number
+  walletsWithBalance?: number
+  byChain?: Record<string, number>
+  byCategory?: Record<string, number>
+  byProtocolGroup?: Record<string, number>
+}
+
+export type AumToken = {
+  symbol: string
+  name?: string
+  chain?: string
+  protocolGroup?: string | null
+  balanceUsd: number
+}
+
 export type RevenueTxLite = {
   hash?: string
   createdAt: number
@@ -129,6 +148,9 @@ export type AnalyticsIndex = {
   referralCodes: Map<string, ReferralCodeMeta>
   ownerUsageDaily: Map<string, Map<string, DailyAgg>>
   customerUsageDaily: Map<string, Map<string, DailyAgg>>
+  aumByWallet: Map<string, number>
+  aumTokensByWallet: Map<string, AumToken[]>
+  aumSnapshot?: AumSnapshot
   global: ReferralIndex
   totals: {
     customers: number
@@ -143,6 +165,7 @@ export type AnalyticsIndex = {
     txFile?: FileMeta
     txFiles?: FileMeta[]
     referralCodesFile?: FileMeta
+    aumFile?: FileMeta
     generatedAt: number
   }
 }
@@ -155,8 +178,11 @@ export type ReferralMetrics = {
   firstRevenueTxUsers: number
   feeUsd: number
   volumeUsd: number
+  aumUsd: number
+  aumWallets: number
   conversionRate: number
   feePerUser: number
+  feePerAumDollar: number
   retention30d: number
   timeToFirstTxMedianDays: number
   kycRate: number
@@ -167,6 +193,9 @@ export type AnalyticsSnapshot = {
   options: AnalyticsOptions
   totals: AnalyticsIndex['totals']
   customers: Customer[]
+  aumByWallet?: Array<[string, number]>
+  aumTokensByWallet?: Array<[string, AumToken[]]>
+  aumSnapshot?: AumSnapshot
   global: SerializedReferral
   referrals: SerializedReferral[]
   referralCodes?: ReferralCodeMeta[]
@@ -254,6 +283,8 @@ export function createAnalyticsIndex(options: AnalyticsOptions): AnalyticsIndex 
     referralCodes: new Map(),
     ownerUsageDaily: new Map(),
     customerUsageDaily: new Map(),
+    aumByWallet: new Map(),
+    aumTokensByWallet: new Map(),
     global: createReferralIndex('all'),
     totals: {
       customers: 0,
@@ -433,6 +464,22 @@ export function addCustomer(index: AnalyticsIndex, customer: Customer) {
   index.totals.customers += 1
 }
 
+export function addAumSnapshot(
+  index: AnalyticsIndex,
+  snapshot: AumSnapshot,
+  wallets: Array<{ wallet: string; totalUsd: number; tokens?: AumToken[] }>,
+) {
+  index.aumSnapshot = snapshot
+  wallets.forEach((entry) => {
+    if (!entry.wallet || !Number.isFinite(entry.totalUsd)) return
+    const wallet = normalizeWallet(entry.wallet)
+    index.aumByWallet.set(wallet, entry.totalUsd)
+    if (entry.tokens?.length) {
+      index.aumTokensByWallet.set(wallet, entry.tokens)
+    }
+  })
+}
+
 export function addReferralCodeMeta(index: AnalyticsIndex, meta: ReferralCodeMeta) {
   const code = meta.code.trim()
   if (!code) return
@@ -477,14 +524,66 @@ export type ParsedRevenueTx = {
 
 export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx) {
   index.totals.revenueTxCount += 1
+  const dateKey = toDateKey(tx.createdAt)
+  const category = tx.category || 'Unknown'
+
+  const globalDaily = ensureDaily(index.global, dateKey)
+  globalDaily.feeUsd += tx.feeUsd
+  globalDaily.volumeUsd += tx.volumeUsd
+  globalDaily.revenueTxCount += 1
+
+  const globalCategoryAgg = ensureFeeCategory(index.global, category)
+  globalCategoryAgg.feeUsd += tx.feeUsd
+  globalCategoryAgg.revenueTxCount += 1
+
+  const globalCategoryDaily = ensureFeeCategoryDaily(index.global, category, dateKey)
+  globalCategoryDaily.feeUsd += tx.feeUsd
+  globalCategoryDaily.revenueTxCount += 1
+
+  const globalVolumeCategoryAgg = ensureVolumeCategory(index.global, category)
+  globalVolumeCategoryAgg.volumeUsd += tx.volumeUsd
+  globalVolumeCategoryAgg.revenueTxCount += 1
+
+  const globalVolumeCategoryDaily = ensureVolumeCategoryDaily(index.global, category, dateKey)
+  globalVolumeCategoryDaily.volumeUsd += tx.volumeUsd
+  globalVolumeCategoryDaily.revenueTxCount += 1
+
+  if (tx.tokens?.length) {
+    tx.tokens.forEach((token) => {
+      if (!token.symbol || !token.volumeUsd) return
+      const globalTokenAgg = ensureTokenVolume(index.global, token.symbol)
+      globalTokenAgg.volumeUsd += token.volumeUsd
+      globalTokenAgg.txCount += 1
+      const globalTokenDaily = ensureTokenVolumeDaily(index.global, token.symbol, dateKey)
+      globalTokenDaily.volumeUsd += token.volumeUsd
+      globalTokenDaily.txCount += 1
+
+      const globalTokenCategoryDaily = ensureTokenCategoryDaily(index.global, token.symbol, dateKey, category)
+      globalTokenCategoryDaily.volumeUsd += token.volumeUsd
+      globalTokenCategoryDaily.txCount += 1
+    })
+  }
+
+  if (tx.swapFlow?.fromSymbol && tx.swapFlow?.toSymbol && tx.swapFlow.volumeUsd > 0) {
+    const pairKey = `${tx.swapFlow.fromSymbol}→${tx.swapFlow.toSymbol}`
+    const globalPairAgg = ensureSwapFlow(index.global, pairKey)
+    globalPairAgg.volumeUsd += tx.swapFlow.volumeUsd
+    globalPairAgg.txCount += 1
+    const globalPairDaily = ensureSwapFlowDaily(index.global, pairKey, dateKey)
+    globalPairDaily.volumeUsd += tx.swapFlow.volumeUsd
+    globalPairDaily.txCount += 1
+  }
+
+  index.global.feeUsdTotal += tx.feeUsd
+  index.global.volumeUsdTotal += tx.volumeUsd
+  index.global.revenueTxCount += 1
+
   const customer = index.customersByWallet.get(tx.wallet)
   if (!customer) {
     index.totals.unattributedTxCount += 1
     return
   }
   const referral = getReferral(index, customer.referral)
-  const dateKey = toDateKey(tx.createdAt)
-  const category = tx.category || 'Unknown'
 
   const userAgg = referral.users.get(tx.wallet) ?? index.usersByWallet.get(tx.wallet)
   if (!userAgg) return
@@ -527,27 +626,6 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
   volumeCategoryDaily.volumeUsd += tx.volumeUsd
   volumeCategoryDaily.revenueTxCount += 1
 
-  const globalDaily = ensureDaily(index.global, dateKey)
-  globalDaily.feeUsd += tx.feeUsd
-  globalDaily.volumeUsd += tx.volumeUsd
-  globalDaily.revenueTxCount += 1
-
-  const globalCategoryAgg = ensureFeeCategory(index.global, category)
-  globalCategoryAgg.feeUsd += tx.feeUsd
-  globalCategoryAgg.revenueTxCount += 1
-
-  const globalCategoryDaily = ensureFeeCategoryDaily(index.global, category, dateKey)
-  globalCategoryDaily.feeUsd += tx.feeUsd
-  globalCategoryDaily.revenueTxCount += 1
-
-  const globalVolumeCategoryAgg = ensureVolumeCategory(index.global, category)
-  globalVolumeCategoryAgg.volumeUsd += tx.volumeUsd
-  globalVolumeCategoryAgg.revenueTxCount += 1
-
-  const globalVolumeCategoryDaily = ensureVolumeCategoryDaily(index.global, category, dateKey)
-  globalVolumeCategoryDaily.volumeUsd += tx.volumeUsd
-  globalVolumeCategoryDaily.revenueTxCount += 1
-
   if (tx.tokens?.length) {
     tx.tokens.forEach((token) => {
       if (!token.symbol || !token.volumeUsd) return
@@ -561,17 +639,6 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
       const tokenCategoryDaily = ensureTokenCategoryDaily(referral, token.symbol, dateKey, category)
       tokenCategoryDaily.volumeUsd += token.volumeUsd
       tokenCategoryDaily.txCount += 1
-
-      const globalTokenAgg = ensureTokenVolume(index.global, token.symbol)
-      globalTokenAgg.volumeUsd += token.volumeUsd
-      globalTokenAgg.txCount += 1
-      const globalTokenDaily = ensureTokenVolumeDaily(index.global, token.symbol, dateKey)
-      globalTokenDaily.volumeUsd += token.volumeUsd
-      globalTokenDaily.txCount += 1
-
-      const globalTokenCategoryDaily = ensureTokenCategoryDaily(index.global, token.symbol, dateKey, category)
-      globalTokenCategoryDaily.volumeUsd += token.volumeUsd
-      globalTokenCategoryDaily.txCount += 1
     })
   }
 
@@ -583,13 +650,6 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
     const pairDaily = ensureSwapFlowDaily(referral, pairKey, dateKey)
     pairDaily.volumeUsd += tx.swapFlow.volumeUsd
     pairDaily.txCount += 1
-
-    const globalPairAgg = ensureSwapFlow(index.global, pairKey)
-    globalPairAgg.volumeUsd += tx.swapFlow.volumeUsd
-    globalPairAgg.txCount += 1
-    const globalPairDaily = ensureSwapFlowDaily(index.global, pairKey, dateKey)
-    globalPairDaily.volumeUsd += tx.swapFlow.volumeUsd
-    globalPairDaily.txCount += 1
   }
 
   const customerDaily = ensureCustomerDaily(index, customer.id, dateKey)
@@ -600,10 +660,6 @@ export function addRevenueTransaction(index: AnalyticsIndex, tx: ParsedRevenueTx
   referral.feeUsdTotal += tx.feeUsd
   referral.volumeUsdTotal += tx.volumeUsd
   referral.revenueTxCount += 1
-
-  index.global.feeUsdTotal += tx.feeUsd
-  index.global.volumeUsdTotal += tx.volumeUsd
-  index.global.revenueTxCount += 1
 
   const txLite: RevenueTxLite = {
     hash: tx.hash,
@@ -688,6 +744,18 @@ export function getReferralMetrics(index: AnalyticsIndex, code: string, range: D
   const retention30d = usersWithRevenueTx ? retainedUsers / usersWithRevenueTx : 0
   const kycRate = signups ? kycUsers / signups : 0
 
+  let aumUsd = 0
+  let aumWallets = 0
+  referral.users.forEach((user) => {
+    const wallet = user.wallet
+    if (!wallet) return
+    const aum = index.aumByWallet.get(wallet)
+    if (aum === undefined) return
+    aumUsd += aum
+    aumWallets += 1
+  })
+  const feePerAumDollar = aumUsd ? dailyTotals.feeUsd / aumUsd : 0
+
   return {
     code: referral.code,
     signups,
@@ -696,8 +764,11 @@ export function getReferralMetrics(index: AnalyticsIndex, code: string, range: D
     firstRevenueTxUsers,
     feeUsd: dailyTotals.feeUsd,
     volumeUsd: dailyTotals.volumeUsd,
+    aumUsd,
+    aumWallets,
     conversionRate,
     feePerUser,
+    feePerAumDollar,
     retention30d,
     timeToFirstTxMedianDays,
     kycRate,
@@ -1015,6 +1086,9 @@ export function serializeIndex(index: AnalyticsIndex): AnalyticsSnapshot {
     options: index.options,
     totals: index.totals,
     customers: Array.from(index.customersByWallet.values()),
+    aumByWallet: Array.from(index.aumByWallet.entries()),
+    aumTokensByWallet: Array.from(index.aumTokensByWallet.entries()),
+    aumSnapshot: index.aumSnapshot,
     global: {
       code: index.global.code,
       signupsByDate: Array.from(index.global.signupsByDate.entries()),
@@ -1123,6 +1197,15 @@ export function deserializeIndex(snapshot: AnalyticsSnapshot): AnalyticsIndex {
     index.customersByWallet.set(customer.smartWallet, customer)
     index.customersById.set(customer.id, customer)
   })
+  snapshot.aumByWallet?.forEach(([wallet, totalUsd]) => {
+    index.aumByWallet.set(wallet, totalUsd)
+  })
+  snapshot.aumTokensByWallet?.forEach(([wallet, tokens]) => {
+    index.aumTokensByWallet.set(wallet, tokens)
+  })
+  if (snapshot.aumSnapshot) {
+    index.aumSnapshot = snapshot.aumSnapshot
+  }
 
   const global = createReferralIndex(snapshot.global.code)
   snapshot.global.signupsByDate.forEach(([date, value]) => global.signupsByDate.set(date, value))

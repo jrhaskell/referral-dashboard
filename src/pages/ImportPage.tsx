@@ -9,6 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { Switch } from '@/components/ui/switch'
 import {
   addCustomer,
+  addAumSnapshot,
   addOwnerUsageDaily,
   addReferralCodeMeta,
   addRevenueTransaction,
@@ -20,6 +21,7 @@ import {
 } from '@/lib/analytics'
 import { useAnalytics } from '@/lib/analytics/context'
 import { type CsvParseResult, parseCustomersCsv } from '@/lib/parsers/csv'
+import { parseAumReport } from '@/lib/parsers/aum'
 import { parseReferralCodesCsv, type ReferralCodesParseResult } from '@/lib/parsers/referralCodes'
 import { parseTransactionsNdjson } from '@/lib/parsers/ndjson'
 import { buildCacheKey, getSnapshot, saveSnapshot } from '@/lib/storage/indexeddb'
@@ -29,6 +31,7 @@ type DataManifest = {
   customersCsv?: string | null
   referralCodesCsv?: string | null
   ndjsonFiles?: string[] | null
+  aumReportJson?: string | null
 }
 
 const DATA_BASE_PATH = `${import.meta.env.BASE_URL}data/`
@@ -40,6 +43,7 @@ export function ImportPage() {
   const [customersFile, setCustomersFile] = React.useState<File | null>(null)
   const [txFiles, setTxFiles] = React.useState<File[]>([])
   const [referralCodesFile, setReferralCodesFile] = React.useState<File | null>(null)
+  const [aumFile, setAumFile] = React.useState<File | null>(null)
   const [keepFullTx, setKeepFullTx] = React.useState(false)
   const [isBuilding, setIsBuilding] = React.useState(false)
   const [isLoadingDataFolder, setIsLoadingDataFolder] = React.useState(false)
@@ -60,6 +64,7 @@ export function ImportPage() {
     setCustomersFile(null)
     setTxFiles([])
     setReferralCodesFile(null)
+    setAumFile(null)
     setKeepFullTx(false)
     setCsvReport(null)
     setReferralReport(null)
@@ -100,6 +105,7 @@ export function ImportPage() {
     const summary: string[] = []
     if (dataManifest.customersCsv) summary.push('Customers CSV')
     if (dataManifest.referralCodesCsv) summary.push('Referral codes CSV')
+    if (dataManifest.aumReportJson) summary.push('AUM report')
     if (dataManifest.ndjsonFiles?.length) {
       summary.push(`${dataManifest.ndjsonFiles.length} NDJSON file${dataManifest.ndjsonFiles.length > 1 ? 's' : ''}`)
     }
@@ -122,17 +128,18 @@ export function ImportPage() {
           throw new Error('manifest-unavailable')
         }
         const manifest = (await response.json()) as DataManifest
-        const normalized: DataManifest = {
-          customersCsv: manifest.customersCsv?.trim() || null,
-          referralCodesCsv: manifest.referralCodesCsv?.trim() || null,
+      const normalized: DataManifest = {
+        customersCsv: manifest.customersCsv?.trim() || null,
+        referralCodesCsv: manifest.referralCodesCsv?.trim() || null,
+        aumReportJson: manifest.aumReportJson?.trim() || null,
           ndjsonFiles: Array.isArray(manifest.ndjsonFiles)
             ? manifest.ndjsonFiles.map((entry) => entry.trim()).filter(Boolean)
             : [],
         }
-        const hasData =
-          Boolean(normalized.customersCsv) ||
-          Boolean(normalized.referralCodesCsv) ||
-          Boolean(normalized.ndjsonFiles?.length)
+      const hasData =
+        Boolean(normalized.customersCsv) ||
+        Boolean(normalized.referralCodesCsv) ||
+        Boolean(normalized.ndjsonFiles?.length)
         if (!hasData) {
           if (isActive) setDataFolderStatus('empty')
           return
@@ -174,11 +181,13 @@ export function ImportPage() {
     setErrors([])
     setDataFolderMessage(null)
     setStatus('Loading data folder…')
-    try {
-      const missing: string[] = []
-      const nextCustomersPath = dataManifest.customersCsv
-      const nextReferralPath = dataManifest.referralCodesCsv
-      const nextNdjsonPaths = dataManifest.ndjsonFiles ?? []
+      try {
+        const missing: string[] = []
+        const warnings: string[] = []
+        const nextCustomersPath = dataManifest.customersCsv
+        const nextReferralPath = dataManifest.referralCodesCsv
+        const nextAumPath = dataManifest.aumReportJson
+        const nextNdjsonPaths = dataManifest.ndjsonFiles ?? []
 
       if (nextCustomersPath) {
         setCustomersFile(await fetchManifestFile(nextCustomersPath))
@@ -190,6 +199,15 @@ export function ImportPage() {
         setReferralCodesFile(await fetchManifestFile(nextReferralPath))
       } else {
         missing.push('Referral codes CSV')
+      }
+
+      if (nextAumPath) {
+        try {
+          setAumFile(await fetchManifestFile(nextAumPath))
+        } catch (error) {
+          warnings.push(`AUM report not found: ${nextAumPath}`)
+          setAumFile(null)
+        }
       }
 
       if (nextNdjsonPaths.length) {
@@ -205,6 +223,9 @@ export function ImportPage() {
       if (missing.length) {
         setDataFolderMessage(`Missing ${missing.join(', ')} in the manifest.`)
       } else {
+        if (warnings.length) {
+          setDataFolderMessage(warnings.join(' · '))
+        }
         setStatus('Data folder files loaded.')
       }
     } catch (error) {
@@ -235,8 +256,15 @@ export function ImportPage() {
       size: referralCodesFile.size,
       lastModified: referralCodesFile.lastModified,
     }
+    const aumMeta: FileMeta | undefined = aumFile
+      ? {
+          name: aumFile.name,
+          size: aumFile.size,
+          lastModified: aumFile.lastModified,
+        }
+      : undefined
 
-    const cacheKey = buildCacheKey(customersMeta, txMetas, referralCodesMeta)
+    const cacheKey = buildCacheKey(customersMeta, txMetas, referralCodesMeta, aumMeta)
     try {
       const cached = await getSnapshot(cacheKey)
       if (cached) {
@@ -285,10 +313,17 @@ export function ImportPage() {
         txFile: txMetas.length === 1 ? txMetas[0] : undefined,
         txFiles: txMetas,
         referralCodesFile: referralCodesMeta,
+        aumFile: aumMeta,
         generatedAt: Date.now(),
       }
       referralResult.codes.forEach((meta) => addReferralCodeMeta(index, meta))
       csvResult.customers.forEach((customer) => addCustomer(index, customer))
+
+      if (aumFile) {
+        setStatus('Parsing AUM report…')
+        const aumResult = await parseAumReport(aumFile)
+        addAumSnapshot(index, aumResult.snapshot, aumResult.wallets)
+      }
 
       const ownerWallets = new Map<string, string>()
       referralResult.codes.forEach((meta) => {
@@ -435,6 +470,14 @@ export function ImportPage() {
               disabled={isBuilding}
             />
           </div>
+          <FileDropzone
+            label="AUM wallet-report.json"
+            description="Optional: wallet AUM snapshot for deeper analysis."
+            accept=".json"
+            file={aumFile}
+            onFile={setAumFile}
+            disabled={isBuilding}
+          />
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border bg-muted/40 p-4">
             <div>
               <p className="text-sm font-medium">Keep full tx list</p>

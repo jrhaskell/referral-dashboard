@@ -9,6 +9,7 @@ import { WalletLookupPage } from '@/pages/WalletLookupPage'
 import { ClientsPage } from '@/pages/ClientsPage'
 import { GroupsPage } from '@/pages/GroupsPage'
 import { ReferralCodesPage } from '@/pages/ReferralCodesPage'
+import { TopAumPage } from '@/pages/TopAumPage'
 
 function RequireIndex({ children }: { children: React.ReactNode }) {
   const { index } = useAnalytics()
@@ -80,6 +81,14 @@ function App() {
               Clients
             </NavLink>
             <NavLink
+              to="/top-aum"
+              className={({ isActive }) =>
+                isActive ? 'font-semibold text-primary' : 'text-muted-foreground'
+              }
+            >
+              Top AUM
+            </NavLink>
+            <NavLink
               to="/lookup"
               className={({ isActive }) =>
                 isActive ? 'font-semibold text-primary' : 'text-muted-foreground'
@@ -130,6 +139,14 @@ function App() {
             element={
               <RequireIndex>
                 <ClientsPage />
+              </RequireIndex>
+            }
+          />
+          <Route
+            path="/top-aum"
+            element={
+              <RequireIndex>
+                <TopAumPage />
               </RequireIndex>
             }
           />

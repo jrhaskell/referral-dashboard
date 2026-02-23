@@ -3,7 +3,7 @@ import type { AnalyticsSnapshot, FileMeta } from '@/lib/analytics'
 const DB_NAME = 'referral-analytics'
 const STORE_NAME = 'snapshots'
 const DB_VERSION = 1
-const CACHE_VERSION = 'v12-swap-sankey'
+const CACHE_VERSION = 'v16-aum-portfolio'
 
 function openDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -19,9 +19,15 @@ function openDb() {
   })
 }
 
-export function buildCacheKey(customers: FileMeta, txs: FileMeta[], referralCodes: FileMeta) {
+export function buildCacheKey(
+  customers: FileMeta,
+  txs: FileMeta[],
+  referralCodes: FileMeta,
+  aum?: FileMeta,
+) {
   const txKey = txs.map((tx) => `${tx.name}:${tx.size}:${tx.lastModified}`).join('|')
-  return `${CACHE_VERSION}__${customers.name}:${customers.size}:${customers.lastModified}__${txKey}__${referralCodes.name}:${referralCodes.size}:${referralCodes.lastModified}`
+  const aumKey = aum ? `${aum.name}:${aum.size}:${aum.lastModified}` : 'no-aum'
+  return `${CACHE_VERSION}__${customers.name}:${customers.size}:${customers.lastModified}__${txKey}__${referralCodes.name}:${referralCodes.size}:${referralCodes.lastModified}__${aumKey}`
 }
 
 export async function getSnapshot(key: string): Promise<AnalyticsSnapshot | null> {

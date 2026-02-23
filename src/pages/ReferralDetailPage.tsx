@@ -359,11 +359,21 @@ export function ReferralDetailPage() {
 
       <DateRangePicker range={dateRange} min={bounds.start} max={bounds.end} onChange={setDateRange} />
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-6">
         <KpiCard title="Signups" value={formatNumber(metrics.signups)} />
         <KpiCard title="KYC Users" value={formatNumber(metrics.kycUsers)} />
         <KpiCard title="Users with revenue" value={formatNumber(metrics.usersWithRevenueTx)} />
         <KpiCard title="Retention 30d" value={formatPercent(metrics.retention30d)} />
+        <KpiCard
+          title="AUM"
+          value={formatUsd(metrics.aumUsd)}
+          helper={`${formatNumber(metrics.aumWallets)} wallets`}
+        />
+        <KpiCard
+          title="Fee / AUM"
+          value={formatPercent(metrics.feePerAumDollar)}
+          helper="Fee / $1 AUM"
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
