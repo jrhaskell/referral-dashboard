@@ -11,17 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { type DateRange, getRangeBounds, getSwapFlowSankeyData } from '@/lib/analytics'
 import { useAnalytics } from '@/lib/analytics/context'
-import { formatNumber, formatPercent, formatUsd } from '@/lib/utils'
-
-type PortfolioRow = {
-  rank: number
-  wallet: string
-  referral: string
-  aumUsd: number
-  feeUsd: number
-  volumeUsd: number
-  topHoldings: string
-}
+import { formatPercent, formatUsd } from '@/lib/utils'
 
 const PIE_COLORS = ['#6366f1', '#22c55e', '#0ea5e9', '#f97316', '#e11d48', '#a855f7', '#14b8a6', '#facc15', '#64748b']
 

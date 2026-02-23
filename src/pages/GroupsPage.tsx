@@ -191,12 +191,15 @@ export function GroupsPage() {
     )
     const volumeUsd = filteredMetrics.reduce((sum, metric) => sum + metric.volumeUsd, 0)
     const feeUsd = filteredMetrics.reduce((sum, metric) => sum + metric.feeUsd, 0)
+    const aumUsd = filteredMetrics.reduce((sum, metric) => sum + metric.aumUsd, 0)
+    const aumWallets = filteredMetrics.reduce((sum, metric) => sum + metric.aumWallets, 0)
     const firstRevenueTxUsers = filteredMetrics.reduce(
       (sum, metric) => sum + metric.firstRevenueTxUsers,
       0,
     )
     const conversionRate = signups ? usersWithRevenueTx / signups : 0
     const feePerUser = usersWithRevenueTx ? feeUsd / usersWithRevenueTx : 0
+    const feePerAumDollar = aumUsd ? feeUsd / aumUsd : 0
     const kycRate = signups ? kycUsers / signups : 0
     return {
       code: 'Total',
@@ -206,8 +209,11 @@ export function GroupsPage() {
       firstRevenueTxUsers,
       feeUsd,
       volumeUsd,
+      aumUsd,
+      aumWallets,
       conversionRate,
       feePerUser,
+      feePerAumDollar,
       retention30d: 0,
       timeToFirstTxMedianDays: 0,
       kycRate,

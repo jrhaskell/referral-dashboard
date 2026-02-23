@@ -476,8 +476,6 @@ function buildCustomerRows(
 
 function buildRealConversionByCode(index: AnalyticsIndex, range: DateRange) {
   const totals = new Map<string, number>()
-  const startMs = new Date(range.start).getTime()
-  const endMs = new Date(range.end).getTime() + 86400000 - 1
 
   index.customersById.forEach((customer) => {
     const code = customer.referral
